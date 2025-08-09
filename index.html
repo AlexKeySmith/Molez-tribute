@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Molez-like Local Multiplayer with Bots</title>
+<title>Molez-like Scrolling Cave</title>
 <style>
   html, body {
     margin: 0; padding: 0; overflow: hidden; background: black; color: white;
@@ -57,78 +57,87 @@
 
   const WIDTH = canvas.width;
   const HEIGHT = canvas.height;
-  const BLOCK_SIZE = 24;
+  const BLOCK_SIZE = 12;  // smaller blocks for cave vibe
   const TERRAIN_ROWS = Math.floor(HEIGHT / BLOCK_SIZE);
-  const TERRAIN_COLS = Math.floor(WIDTH / BLOCK_SIZE);
+  const TERRAIN_COLS = 100; // wider terrain for scrolling
 
-  // Terrain: 2D boolean array
   let terrain = [];
 
-  // Player and bullets arrays
   let players = [];
   let bullets = [];
 
-  // Controls state
+  // Scroll offset in pixels
+  let scrollX = 0;
+
   const controls = { left: false, right: false, up: false, fire: false };
 
-  // Utility random integer
   function randInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
   }
 
-  // Generate terrain - bottom 3 rows solid, 4th row destructible randomly
   function generateTerrain() {
     terrain = [];
-    for (let r = 0; r < TERRAIN_ROWS; r++) {
+    for(let r = 0; r < TERRAIN_ROWS; r++) {
       terrain[r] = [];
-      for (let c = 0; c < TERRAIN_COLS; c++) {
-        if (r >= TERRAIN_ROWS - 3) {
-          terrain[r][c] = true;
-        } else if (r === TERRAIN_ROWS - 4) {
-          terrain[r][c] = Math.random() < 0.1;
+      for(let c = 0; c < TERRAIN_COLS; c++) {
+        // Create cave-like shape with some random noise
+        if (r > TERRAIN_ROWS - 5) {
+          terrain[r][c] = true; // solid bottom 5 rows
+        } else if (r > TERRAIN_ROWS - 10) {
+          // random blocks around bottom-middle area
+          terrain[r][c] = Math.random() < 0.3;
         } else {
+          // empty space upper part
           terrain[r][c] = false;
         }
       }
     }
+
+    // Create some tunnels/caves by clearing random patches
+    for(let i = 0; i < 150; i++) {
+      let cr = randInt(TERRAIN_ROWS - 15, TERRAIN_ROWS - 5);
+      let cc = randInt(0, TERRAIN_COLS - 1);
+      terrain[cr][cc] = false;
+    }
   }
 
-  // Draw terrain blocks
   function drawTerrain() {
     ctx.fillStyle = '#654321';
-    for (let r = 0; r < TERRAIN_ROWS; r++) {
-      for (let c = 0; c < TERRAIN_COLS; c++) {
-        if (terrain[r][c]) {
-          ctx.fillRect(c * BLOCK_SIZE, r * BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+    for(let r = 0; r < TERRAIN_ROWS; r++) {
+      for(let c = 0; c < TERRAIN_COLS; c++) {
+        if(terrain[r][c]) {
+          // draw blocks offset by scrollX
+          const drawX = c * BLOCK_SIZE - scrollX;
+          const drawY = r * BLOCK_SIZE;
+          if(drawX + BLOCK_SIZE < 0 || drawX > WIDTH) continue; // skip off screen
+          ctx.fillRect(drawX, drawY, BLOCK_SIZE, BLOCK_SIZE);
         }
       }
     }
   }
 
-  // Check collision between rect and terrain blocks
   function collidesWithTerrain(x, y, w, h) {
-    const startCol = Math.floor(x / BLOCK_SIZE);
-    const endCol = Math.floor((x + w) / BLOCK_SIZE);
+    const startCol = Math.floor((x + scrollX) / BLOCK_SIZE);
+    const endCol = Math.floor((x + scrollX + w) / BLOCK_SIZE);
     const startRow = Math.floor(y / BLOCK_SIZE);
     const endRow = Math.floor((y + h) / BLOCK_SIZE);
 
-    for (let r = startRow; r <= endRow; r++) {
-      for (let c = startCol; c <= endCol; c++) {
-        if (r < 0 || r >= TERRAIN_ROWS || c < 0 || c >= TERRAIN_COLS) continue;
-        if (terrain[r][c]) return true;
+    for(let r = startRow; r <= endRow; r++) {
+      for(let c = startCol; c <= endCol; c++) {
+        if(r < 0 || r >= TERRAIN_ROWS || c < 0 || c >= TERRAIN_COLS) continue;
+        if(terrain[r][c]) return true;
       }
     }
     return false;
   }
 
-  // Player class
   class Player {
     constructor(id, x, y, color='cyan', isBot=false) {
       this.id = id;
       this.x = x;
       this.y = y;
-      this.w = 16;
-      this.h = 24;
+      this.w = 12;
+      this.h = 18;
       this.color = color;
       this.speedX = 0;
       this.speedY = 0;
@@ -160,8 +169,8 @@
     }
     fire() {
       if(this.fireCooldown <= 0 && !this.isDead) {
-        let bulletX = this.direction === 1 ? this.x + this.w : this.x - 8;
-        let bulletY = this.y + this.h / 2 - 4;
+        let bulletX = this.direction === 1 ? this.x + this.w : this.x - 6;
+        let bulletY = this.y + this.h / 2 - 3;
         bullets.push(new Bullet(this.id, bulletX, bulletY, this.direction));
         this.fireCooldown = 30;
       }
@@ -188,9 +197,11 @@
         this.speedY = 0;
       }
 
-      // Clamp inside canvas
+      // Clamp inside map horizontally
       if(this.x < 0) this.x = 0;
-      if(this.x + this.w > WIDTH) this.x = WIDTH - this.w;
+      if(this.x + this.w > TERRAIN_COLS * BLOCK_SIZE) this.x = TERRAIN_COLS * BLOCK_SIZE - this.w;
+
+      // Clamp vertically to canvas bottom
       if(this.y + this.h > HEIGHT) {
         this.y = HEIGHT - this.h;
         this.onGround = true;
@@ -199,7 +210,6 @@
 
       if(this.fireCooldown > 0) this.fireCooldown--;
 
-      // Bot AI
       if(this.isBot && !this.isDead) this.botAI();
     }
 
@@ -223,36 +233,35 @@
     draw() {
       if(this.isDead) {
         ctx.fillStyle = '#900';
-        ctx.fillRect(this.x, this.y, this.w, this.h);
+        ctx.fillRect(this.x - scrollX, this.y, this.w, this.h);
         ctx.fillStyle = 'white';
-        ctx.fillText('💀', this.x+3, this.y+18);
+        ctx.fillText('💀', this.x - scrollX + 2, this.y + 14);
         return;
       }
       ctx.fillStyle = this.color;
-      ctx.fillRect(this.x, this.y, this.w, this.h);
+      ctx.fillRect(this.x - scrollX, this.y, this.w, this.h);
       // eyes
       ctx.fillStyle = 'white';
       if(this.direction === 1) {
-        ctx.fillRect(this.x + this.w - 6, this.y + 6, 4, 4);
+        ctx.fillRect(this.x - scrollX + this.w - 5, this.y + 5, 3, 3);
       } else {
-        ctx.fillRect(this.x + 2, this.y + 6, 4, 4);
+        ctx.fillRect(this.x - scrollX + 2, this.y + 5, 3, 3);
       }
     }
   }
 
-  // Bullet class
   class Bullet {
     constructor(ownerId, x, y, dir) {
       this.ownerId = ownerId;
       this.x = x;
       this.y = y;
-      this.w = 8;
-      this.h = 8;
+      this.w = 6;
+      this.h = 6;
       this.speedX = 6 * dir;
       this.speedY = 0;
       this.gravity = 0.15;
       this.isDead = false;
-      this.explodeRadius = 24;
+      this.explodeRadius = 18;
       this.color = '#ff4';
     }
     update() {
@@ -266,7 +275,6 @@
         this.explode();
       }
 
-      // Check hitting players
       players.forEach(p => {
         if(p.id !== this.ownerId && !p.isDead && this.collidesWithPlayer(p)) {
           p.isDead = true;
@@ -274,17 +282,15 @@
         }
       });
 
-      // Out of bounds
-      if(this.x < 0 || this.x > WIDTH || this.y > HEIGHT) this.isDead = true;
+      if(this.x < 0 || this.x > TERRAIN_COLS * BLOCK_SIZE || this.y > HEIGHT) this.isDead = true;
     }
     collidesWithPlayer(p) {
       return !(this.x + this.w < p.x || this.x > p.x + p.w || this.y + this.h < p.y || this.y > p.y + p.h);
     }
     explode() {
       this.isDead = true;
-      // Destroy terrain in radius
-      const centerX = this.x + this.w/2;
-      const centerY = this.y + this.h/2;
+      const centerX = this.x + this.w / 2 + scrollX;
+      const centerY = this.y + this.h / 2;
 
       for(let r=0; r<TERRAIN_ROWS; r++) {
         for(let c=0; c<TERRAIN_COLS; c++) {
@@ -301,7 +307,7 @@
       if(this.isDead) return;
       ctx.fillStyle = this.color;
       ctx.beginPath();
-      ctx.ellipse(this.x + this.w/2, this.y + this.h/2, this.w/2, this.h/2, 0, 0, 2*Math.PI);
+      ctx.ellipse(this.x - scrollX + this.w/2, this.y + this.h/2, this.w/2, this.h/2, 0, 0, 2*Math.PI);
       ctx.fill();
     }
   }
@@ -335,7 +341,6 @@
     });
   }
 
-  // Bind controls buttons
   bindButton(document.getElementById('leftBtn'), 'left');
   bindButton(document.getElementById('rightBtn'), 'right');
   bindButton(document.getElementById('upBtn'), 'up');
@@ -343,7 +348,6 @@
 
   // Game loop functions
   function updateGame() {
-    // Apply player controls to local player (id=0)
     let localPlayer = players[0];
     if(localPlayer && !localPlayer.isDead) {
       if(controls.left && !controls.right) localPlayer.moveLeft();
@@ -356,8 +360,16 @@
     players.forEach(p => p.update());
     bullets.forEach(b => b.update());
 
-    // Remove dead bullets
     bullets = bullets.filter(b => !b.isDead);
+
+    // Update scrollX to follow player horizontally, clamp to terrain edges
+    if(localPlayer) {
+      // center player horizontally but clamp so we don't scroll past terrain edges
+      let targetScroll = localPlayer.x + localPlayer.w/2 - WIDTH/2;
+      if(targetScroll < 0) targetScroll = 0;
+      if(targetScroll > TERRAIN_COLS * BLOCK_SIZE - WIDTH) targetScroll = TERRAIN_COLS * BLOCK_SIZE - WIDTH;
+      scrollX += (targetScroll - scrollX) * 0.1; // smooth easing
+    }
   }
 
   function drawGame() {
@@ -373,25 +385,20 @@
     requestAnimationFrame(gameLoop);
   }
 
-  // Initialize game state
   function startGame() {
     generateTerrain();
 
-    // Local player
     players = [];
-    players.push(new Player('local', 100, HEIGHT - 72, 'cyan'));
-
-    // Add 2 bots
-    players.push(new Player('bot1', 300, HEIGHT - 72, 'red', true));
-    players.push(new Player('bot2', 500, HEIGHT - 72, 'lime', true));
+    players.push(new Player('local', 100, HEIGHT - 40, 'cyan'));
+    players.push(new Player('bot1', 300, HEIGHT - 40, 'red', true));
+    players.push(new Player('bot2', 500, HEIGHT - 40, 'lime', true));
 
     gameLoop();
   }
 
-  // Start immediately
   startGame();
 
-  // Fullscreen and landscape instructions
+  // fullscreen on tap
   document.body.addEventListener('click', () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen();
