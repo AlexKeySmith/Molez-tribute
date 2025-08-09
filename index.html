@@ -1,155 +1,723 @@
 <!DOCTYPE html>
-<html>
+<html lang="en" >
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
-<title>Worms-like Multiplayer with Destructible Terrain</title>
-<style>
-  body, html {
-    margin:0; padding:0; overflow:hidden;
-    background:#222; color:#eee; font-family:sans-serif;
-    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
-    height: 100vh;
-    user-select: none;
-  }
-  #orientation-warning {
-    position: fixed;
-    top: 0; left: 0; width: 100vw; height: 100vh;
-    background: #000c;
-    color: #fff;
-    font-size: 24px;
-    display: flex; justify-content: center; align-items: center;
-    z-index: 1000;
-    text-align: center;
-    padding: 20px;
-    box-sizing: border-box;
-  }
-  canvas {
-    background: #333;
-    border: 2px solid #555;
-    margin: 10px 0;
-    touch-action: none;
-    max-width: 100vw;
-    max-height: 60vh;
-  }
-  .controls {
-    width: 100vw;
-    display: flex;
-    justify-content: space-around;
-    padding: 5px 0;
-    user-select: none;
-  }
-  .player-controls {
-    background: #444;
-    padding: 8px 10px;
-    border-radius: 10px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    min-width: 140px;
-  }
-  h3 {
-    margin: 4px 0 8px 0;
-    text-align: center;
-  }
-  button {
-    width: 44px; height: 44px;
-    font-size: 20px;
-    margin: 2px;
-    border-radius: 8px;
-    border: none;
-    background: #555;
-    color: #eee;
-    user-select: none;
-  }
-  button:active {
-    background: #0a84ff;
-  }
-  .fire-btn {
-    background: #d33 !important;
-    width: 100%;
-    margin-top: 8px;
-    height: 44px;
-  }
-  #fullscreen-btn {
-    margin-bottom: 6px;
-    padding: 8px 16px;
-    font-size: 18px;
-    background: #0a84ff;
-    border: none;
-    border-radius: 8px;
-    color: white;
-    user-select: none;
-    cursor: pointer;
-  }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
+  <title>Molez Multiplayer with Destructible Terrain & Explosions</title>
+  <style>
+    html, body {
+      margin: 0; padding: 0; height: 100%; overflow: hidden;
+      background: #111;
+      color: #eee;
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      -webkit-user-select:none; user-select:none;
+      touch-action:none;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: flex-start;
+    }
+    #orientation-warning {
+      position: fixed;
+      top:0; left:0; width:100vw; height:100vh;
+      background: #000c;
+      color: white;
+      font-size: 24px;
+      display: flex; justify-content: center; align-items: center;
+      text-align: center;
+      z-index: 10000;
+      padding: 20px;
+      box-sizing: border-box;
+      user-select:none;
+    }
+    #game-container {
+      position: relative;
+      width: 100vw;
+      height: 100vh;
+      background: #222;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      user-select:none;
+    }
+    canvas#game {
+      background: #333;
+      border: 2px solid #555;
+      max-width: 100vw;
+      max-height: 100vh;
+      touch-action: none;
+      display: block;
+      image-rendering: pixelated;
+    }
 
-  /* Player 2 controls flipped upside down so they face player 2 */
-  #player2-controls {
-    transform: rotate(180deg);
-  }
-  /* Flip buttons inside player 2 controls back so text is upright */
-  #player2-controls button {
-    transform: rotate(180deg);
-  }
-  #player2-controls h3 {
-    transform: rotate(180deg);
-  }
+    /* Controls overlays */
+    #controls {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+      pointer-events: none;
+      user-select:none;
+    }
+    .dpad {
+      position: absolute;
+      bottom: 20px;
+      left: 20px;
+      width: 140px;
+      height: 140px;
+      background: rgba(60,60,60,0.7);
+      border-radius: 20px;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      grid-template-rows: 1fr 1fr 1fr;
+      pointer-events: auto;
+      user-select:none;
+      z-index: 100;
+    }
+    .dpad button {
+      background: rgba(100,100,100,0.7);
+      border: none;
+      border-radius: 8px;
+      font-size: 28px;
+      color: white;
+      user-select: none;
+      outline: none;
+      cursor: pointer;
+      transition: background-color 0.1s ease;
+    }
+    .dpad button:active, .dpad button.pressed {
+      background: #0a84ff;
+    }
+    .dpad .center {
+      background: transparent;
+      pointer-events: none;
+    }
+    #fire-btn {
+      position: absolute;
+      bottom: 30px;
+      right: 30px;
+      width: 80px;
+      height: 80px;
+      border-radius: 50%;
+      background: rgba(210, 50, 50, 0.85);
+      border: none;
+      font-size: 24px;
+      color: white;
+      user-select: none;
+      pointer-events: auto;
+      cursor: pointer;
+      transition: background-color 0.1s ease;
+      z-index: 100;
+    }
+    #fire-btn:active, #fire-btn.pressed {
+      background: #d33;
+    }
 
-  /* Layout: player 2 controls at top, canvas in middle, player 1 controls at bottom */
-  #player2-wrapper {
-    width: 100vw;
-    display: flex;
-    justify-content: center;
-    padding: 6px 0;
-  }
-  #player1-wrapper {
-    width: 100vw;
-    display: flex;
-    justify-content: center;
-    padding: 6px 0;
-  }
-</style>
+    #signal-ui {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      background: #222c;
+      padding: 12px;
+      border-radius: 8px;
+      max-width: 320px;
+      font-size: 12px;
+      user-select: text;
+      color: #eee;
+      z-index: 1200;
+      box-sizing: border-box;
+      font-family: monospace;
+      line-height: 1.2em;
+      max-height: 320px;
+      overflow-y: auto;
+    }
+    #signal-ui textarea {
+      width: 100%;
+      height: 80px;
+      resize: none;
+      background: #111;
+      color: #eee;
+      border: 1px solid #555;
+      border-radius: 4px;
+      padding: 6px;
+      font-family: monospace;
+      font-size: 12px;
+      box-sizing: border-box;
+    }
+    #signal-ui button {
+      margin-top: 8px;
+      width: 100%;
+      background: #0a84ff;
+      color: white;
+      border: none;
+      padding: 8px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: bold;
+    }
+    #connection-status {
+      position: fixed;
+      top: 10px;
+      right: 10px;
+      background: #004400cc;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      color: #afa;
+      font-family: monospace;
+      user-select:none;
+      z-index: 1300;
+      min-width: 130px;
+      text-align: center;
+    }
+    #players-list {
+      position: fixed;
+      top: 110px;
+      right: 10px;
+      background: #002222cc;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      color: #afa;
+      font-family: monospace;
+      user-select:none;
+      z-index: 1300;
+      max-width: 150px;
+      max-height: 250px;
+      overflow-y: auto;
+    }
+  </style>
 </head>
 <body>
 
 <div id="orientation-warning" style="display:none;">
-  Please rotate your device to <strong>landscape</strong> for the best experience.
+  Please rotate your device to <b>landscape</b> mode for the best experience.
 </div>
 
-<button id="fullscreen-btn">Go Fullscreen</button>
-
-<div id="player2-wrapper">
-  <div class="player-controls" id="player2-controls">
-    <h3>Player 2</h3>
-    <div style="display:flex; justify-content:center;">
-      <button id="p2-left">◀</button>
-      <button id="p2-up">▲</button>
-      <button id="p2-right">▶</button>
+<div id="game-container">
+  <canvas id="game" width="640" height="360"></canvas>
+  <div id="controls">
+    <div class="dpad" id="dpad">
+      <button id="left-btn" style="grid-area:2 / 1 / 3 / 2;" aria-label="Left">◀</button>
+      <button id="up-btn" style="grid-area:1 / 2 / 2 / 3;" aria-label="Up">▲</button>
+      <button id="right-btn" style="grid-area:2 / 3 / 3 / 4;" aria-label="Right">▶</button>
+      <div class="center"></div>
     </div>
-    <button id="p2-fire" class="fire-btn">Fire</button>
+    <button id="fire-btn" aria-label="Fire">Fire</button>
   </div>
 </div>
 
-<canvas id="game" width="640" height="360"></canvas>
+<div id="signal-ui" style="display:none;" aria-live="polite" aria-atomic="true">
+  <div><b>Signal Data Exchange</b></div>
+  <textarea id="signal-output" readonly placeholder="Signal data will appear here..."></textarea>
+  <textarea id="signal-input" placeholder="Paste remote signal data here..."></textarea>
+  <button id="signal-send">Send Signal</button>
+</div>
 
-<div id="player1-wrapper">
-  <div class="player-controls" id="player1-controls">
-    <h3>Player 1</h3>
-    <div style="display:flex; justify-content:center;">
-      <button id="p1-left">◀</button>
-      <button id="p1-up">▲</button>
-      <button id="p1-right">▶</button>
-    </div>
-    <button id="p1-fire" class="fire-btn">Fire</button>
-  </div>
+<div id="connection-status" aria-live="polite" aria-atomic="true">
+  Status: <span id="status-text">Disconnected</span>
+</div>
+
+<div id="players-list" aria-live="polite" aria-atomic="true">
+  <b>Players:</b>
+  <ul id="players-ul" style="padding-left: 18px; margin: 4px 0 0 0;"></ul>
 </div>
 
 <script>
-  // ... all game logic remains unchanged ...
+(() => {
+  // ====== Constants ======
+  const CANVAS_WIDTH = 640;
+  const CANVAS_HEIGHT = 360;
 
-  // I'll just paste the exact same JS from before for brevity,
-  // you can use the same script from the previous full example here,
-  // since this change only affects layout & styles.
-</script>
+  // Terrain block size
+  const BLOCK_SIZE = 20;
+  const TERRAIN_ROWS = Math.floor(CANVAS_HEIGHT / BLOCK_SIZE);
+  const TERRAIN_COLS = Math.floor(CANVAS_WIDTH / BLOCK_SIZE);
 
-</body>
-</html>
+  // Max players and bots count
+  const MAX_PLAYERS = 2;
+
+  // ====== DOM references ======
+  const canvas = document.getElementById('game');
+  const ctx = canvas.getContext('2d');
+
+  const orientationWarning = document.getElementById('orientation-warning');
+  const signalUI = document.getElementById('signal-ui');
+  const signalOutput = document.getElementById('signal-output');
+  const signalInput = document.getElementById('signal-input');
+  const signalSendBtn = document.getElementById('signal-send');
+
+  const statusText = document.getElementById('status-text');
+  const playersUl = document.getElementById('players-ul');
+
+  // Controls buttons
+  const leftBtn = document.getElementById('left-btn');
+  const rightBtn = document.getElementById('right-btn');
+  const upBtn = document.getElementById('up-btn');
+  const fireBtn = document.getElementById('fire-btn');
+
+  // ====== Game state ======
+  let players = [];
+  let localPlayer = null;
+  let peerPlayer = null;
+  let bots = [];
+
+  // Terrain blocks 2D array: true = solid block, false = empty
+  let terrain = [];
+
+  // Bullets array
+  let bullets = [];
+
+  // Networking variables
+  let peerConnection = null;
+  let dataChannel = null;
+  let isHost = null;
+
+  // Controls state
+  let controls = { left: false, right: false, up: false, fire: false };
+
+  // ====== Utils ======
+  function randInt(min, max) {
+    return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  // ====== Terrain generation ======
+  function generateTerrain() {
+    terrain = [];
+    for(let r=0; r<TERRAIN_ROWS; r++) {
+      terrain[r] = [];
+      for(let c=0; c<TERRAIN_COLS; c++) {
+        if(r > TERRAIN_ROWS - 3) {
+          terrain[r][c] = true; // ground bottom 3 rows solid
+        } else if(r === TERRAIN_ROWS - 4) {
+          // Random some blocks to make destructible terrain layer
+          terrain[r][c] = Math.random() < 0.1;
+        } else {
+          terrain[r][c] = false;
+        }
+      }
+    }
+  }
+
+  // ====== Terrain rendering ======
+  function drawTerrain(ctx) {
+    ctx.fillStyle = '#654321';
+    for(let r=0; r<TERRAIN_ROWS; r++) {
+      for(let c=0; c<TERRAIN_COLS; c++) {
+        if(terrain[r][c]) {
+          ctx.fillRect(c*BLOCK_SIZE, r*BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+        }
+      }
+    }
+  }
+
+  // ====== Player class ======
+  class Player {
+    constructor(id, x, y, color='cyan', isBot=false) {
+      this.id = id;
+      this.x = x;
+      this.y = y;
+      this.width = 16;
+      this.height = 24;
+      this.color = color;
+      this.speedX = 0;
+      this.speedY = 0;
+      this.isBot = isBot;
+      this.onGround = false;
+      this.fireCooldown = 0;
+      this.isDead = false;
+      this.direction = 1; // 1 = right, -1 = left
+      this.jumpForce = 7;
+      this.speed = 2.5;
+    }
+
+    rect() {
+      return { left: this.x, top: this.y, right: this.x+this.width, bottom: this.y+this.height };
+    }
+
+    moveLeft() {
+      this.speedX = -this.speed;
+      this.direction = -1;
+    }
+    moveRight() {
+      this.speedX = this.speed;
+      this.direction = 1;
+    }
+    stopX() {
+      this.speedX = 0;
+    }
+    jump() {
+      if(this.onGround) {
+        this.speedY = -this.jumpForce;
+        this.onGround = false;
+      }
+    }
+    fire() {
+      if(this.fireCooldown <= 0 && !this.isDead){
+        const bulletX = this.direction === 1 ? this.x + this.width : this.x - 8;
+        const bulletY = this.y + this.height/2 - 4;
+        bullets.push(new Bullet(this.id, bulletX, bulletY, this.direction));
+        this.fireCooldown = 30;
+      }
+    }
+
+    update() {
+      if(this.isDead) return;
+
+      // Apply gravity
+      this.speedY += 0.3;
+      if(this.speedY > 8) this.speedY = 8;
+
+      // Horizontal movement & collision
+      let newX = this.x + this.speedX;
+      if(!collidesWithTerrain(newX, this.y, this.width, this.height)) {
+        this.x = newX;
+      }
+
+      // Vertical movement & collision
+      let newY = this.y + this.speedY;
+      if(!collidesWithTerrain(this.x, newY, this.width, this.height)) {
+        this.y = newY;
+        this.onGround = false;
+      } else {
+        if(this.speedY > 0) {
+          this.onGround = true;
+        }
+        this.speedY = 0;
+      }
+
+      if(this.fireCooldown > 0) this.fireCooldown--;
+
+      // Clamp inside bounds
+      if(this.x < 0) this.x = 0;
+      if(this.x + this.width > CANVAS_WIDTH) this.x = CANVAS_WIDTH - this.width;
+      if(this.y + this.height > CANVAS_HEIGHT) {
+        this.y = CANVAS_HEIGHT - this.height;
+        this.onGround = true;
+        this.speedY = 0;
+      }
+
+      // Update bot AI if bot
+      if(this.isBot && !this.isDead) this.botAI();
+    }
+
+    botAI() {
+      if(!this.onGround) return; // wait until on ground
+      // Simple random AI: move left or right, randomly jump, randomly fire
+      if(Math.random() < 0.02) {
+        if(this.speedX === 0) {
+          this.moveLeft();
+        } else {
+          this.stopX();
+        }
+      }
+      if(Math.random() < 0.01) {
+        this.jump();
+      }
+      if(Math.random() < 0.02) {
+        this.fire();
+      }
+      // Change direction randomly
+      if(Math.random() < 0.02) {
+        if(this.speedX !== 0) this.stopX();
+        else {
+          if(Math.random() < 0.5) this.moveLeft();
+          else this.moveRight();
+        }
+      }
+    }
+
+    draw() {
+      if(this.isDead) {
+        ctx.fillStyle = '#900';
+        ctx.fillRect(this.x, this.y, this.width, this.height);
+        ctx.fillStyle = 'white';
+        ctx.fillText('💀', this.x+3, this.y+18);
+        return;
+      }
+      ctx.fillStyle = this.color;
+      ctx.fillRect(this.x, this.y, this.width, this.height);
+      // Eyes
+      ctx.fillStyle = 'white';
+      if(this.direction === 1) {
+        ctx.fillRect(this.x + this.width - 6, this.y + 6, 4, 4);
+      } else {
+        ctx.fillRect(this.x + 2, this.y + 6, 4, 4);
+      }
+    }
+  }
+
+  // ====== Bullet class ======
+  class Bullet {
+    constructor(ownerId, x, y, dir) {
+      this.ownerId = ownerId;
+      this.x = x;
+      this.y = y;
+      this.width = 8;
+      this.height = 8;
+      this.speedX = 6 * dir;
+      this.isDead = false;
+      this.explodeRadius = 24;
+      this.color = '#ff4';
+      this.gravity = 0.15;
+      this.speedY = 0;
+    }
+    update() {
+      if(this.isDead) return;
+
+      this.speedY += this.gravity;
+      this.x += this.speedX;
+      this.y += this.speedY;
+
+      // Check collision with terrain
+      if(collidesWithTerrain(this.x, this.y, this.width, this.height)) {
+        this.explode();
+        return;
+      }
+
+      // Check collision with players
+      players.forEach(p => {
+        if(!p.isDead && p.id !== this.ownerId && rectIntersect(this.x, this.y, this.width, this.height, p.x, p.y, p.width, p.height)) {
+          p.isDead = true;
+          this.explode();
+        }
+      });
+
+      // Out of bounds kills bullet
+      if(this.x < 0 || this.x > CANVAS_WIDTH || this.y > CANVAS_HEIGHT) {
+        this.isDead = true;
+      }
+    }
+    explode() {
+      if(this.isDead) return;
+      this.isDead = true;
+      // Destroy terrain blocks in radius
+      const cx = this.x + this.width/2;
+      const cy = this.y + this.height/2;
+      const r = this.explodeRadius;
+
+      for(let rIdx = 0; rIdx < TERRAIN_ROWS; rIdx++) {
+        for(let cIdx = 0; cIdx < TERRAIN_COLS; cIdx++) {
+          const blockX = cIdx*BLOCK_SIZE + BLOCK_SIZE/2;
+          const blockY = rIdx*BLOCK_SIZE + BLOCK_SIZE/2;
+          const dx = blockX - cx;
+          const dy = blockY - cy;
+          if(Math.sqrt(dx*dx + dy*dy) < r) {
+            terrain[rIdx][cIdx] = false;
+          }
+        }
+      }
+    }
+    draw() {
+      if(this.isDead) return;
+      ctx.fillStyle = this.color;
+      ctx.beginPath();
+      ctx.ellipse(this.x + this.width/2, this.y + this.height/2, this.width/2, this.height/2, 0, 0, Math.PI*2);
+      ctx.fill();
+    }
+  }
+
+  // ====== Collision helpers ======
+  function rectIntersect(x1,y1,w1,h1, x2,y2,w2,h2) {
+    return !(x2 > x1 + w1 || 
+             x2 + w2 < x1 || 
+             y2 > y1 + h1 || 
+             y2 + h2 < y1);
+  }
+
+  function collidesWithTerrain(x, y, w, h) {
+    // Check all blocks overlapping rectangle
+    const startCol = Math.floor(x / BLOCK_SIZE);
+    const endCol = Math.floor((x + w) / BLOCK_SIZE);
+    const startRow = Math.floor(y / BLOCK_SIZE);
+    const endRow = Math.floor((y + h) / BLOCK_SIZE);
+
+    for(let r = startRow; r <= endRow; r++) {
+      for(let c = startCol; c <= endCol; c++) {
+        if(r < 0 || r >= TERRAIN_ROWS || c < 0 || c >= TERRAIN_COLS) continue;
+        if(terrain[r][c]) return true;
+      }
+    }
+    return false;
+  }
+
+  // ====== Networking ======
+  function logStatus(text) {
+    statusText.textContent = text;
+  }
+
+  // WebRTC PeerConnection and DataChannel signaling helpers:
+  // Manual copy/paste signaling for demo
+
+  async function startHost() {
+    peerConnection = new RTCPeerConnection();
+    dataChannel = peerConnection.createDataChannel('game');
+    setupDataChannel();
+
+    peerConnection.onicecandidate = e => {
+      if(e.candidate === null) {
+        signalOutput.value = JSON.stringify(peerConnection.localDescription);
+      }
+    };
+
+    const offer = await peerConnection.createOffer();
+    await peerConnection.setLocalDescription(offer);
+
+    peerConnection.onconnectionstatechange = () => {
+      if(peerConnection.connectionState === 'connected') {
+        logStatus('Connected as Host');
+        addPeerPlayer();
+      } else if(peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
+        logStatus('Disconnected');
+        removePeerPlayer();
+      }
+    };
+  }
+
+  async function startClient(offerStr) {
+    peerConnection = new RTCPeerConnection();
+
+    peerConnection.ondatachannel = e => {
+      dataChannel = e.channel;
+      setupDataChannel();
+    };
+
+    peerConnection.onicecandidate = e => {
+      if(e.candidate === null) {
+        signalOutput.value = JSON.stringify(peerConnection.localDescription);
+      }
+    };
+
+    const offer = JSON.parse(offerStr);
+    await peerConnection.setRemoteDescription(offer);
+    const answer = await peerConnection.createAnswer();
+    await peerConnection.setLocalDescription(answer);
+
+    peerConnection.onconnectionstatechange = () => {
+      if(peerConnection.connectionState === 'connected') {
+        logStatus('Connected as Client');
+        addPeerPlayer();
+      } else if(peerConnection.connectionState === 'disconnected' || peerConnection.connectionState === 'failed') {
+        logStatus('Disconnected');
+        removePeerPlayer();
+      }
+    };
+  }
+
+  function setupDataChannel() {
+    dataChannel.onopen = () => {
+      logStatus('Data Channel Open');
+      signalUI.style.display = 'none';
+    };
+    dataChannel.onclose = () => {
+      logStatus('Data Channel Closed');
+      removePeerPlayer();
+      signalUI.style.display = 'block';
+    };
+    dataChannel.onerror = err => {
+      console.error('Data Channel Error:', err);
+    };
+    dataChannel.onmessage = e => {
+      try {
+        const msg = JSON.parse(e.data);
+        handlePeerMessage(msg);
+      } catch(err) {
+        console.warn('Invalid message from peer', err);
+      }
+    };
+  }
+
+  function sendMessage(msg) {
+    if(dataChannel && dataChannel.readyState === 'open') {
+      dataChannel.send(JSON.stringify(msg));
+    }
+  }
+
+  // Add peer player to game on connection
+  function addPeerPlayer() {
+    if(!peerPlayer) {
+      peerPlayer = new Player('peer', 400, CANVAS_HEIGHT - 48, 'orange');
+      players.push(peerPlayer);
+      removeBotsIfNeeded();
+      updatePlayersList();
+    }
+  }
+  function removePeerPlayer() {
+    if(peerPlayer) {
+      players = players.filter(p => p !== peerPlayer);
+      peerPlayer = null;
+      addBotsIfNeeded();
+      updatePlayersList();
+    }
+  }
+
+  // Bots management
+  function addBotsIfNeeded() {
+    while(players.length < MAX_PLAYERS) {
+      const botId = 'bot' + (bots.length + 1);
+      const bot = new Player(botId, randInt(100, 500), CANVAS_HEIGHT - 48, 'lime', true);
+      players.push(bot);
+      bots.push(bot);
+    }
+  }
+  function removeBotsIfNeeded() {
+    if(bots.length > 0) {
+      bots.forEach(bot => {
+        const idx = players.indexOf(bot);
+        if(idx !== -1) players.splice(idx, 1);
+      });
+      bots = [];
+    }
+  }
+
+  // Update player list UI
+  function updatePlayersList() {
+    playersUl.innerHTML = '';
+    players.forEach(p => {
+      const li = document.createElement('li');
+      li.textContent = `${p.isBot ? '🤖 Bot' : (p === localPlayer ? '🟢 You' : '🟠 Peer')} (${p.id}) ${p.isDead ? '💀' : ''}`;
+      playersUl.appendChild(li);
+    });
+  }
+
+  // ====== Controls ======
+
+  // Keyboard controls for local player
+  window.addEventListener('keydown', e => {
+    if(e.repeat) return;
+    switch(e.key) {
+      case 'ArrowLeft': controls.left = true; break;
+      case 'ArrowRight': controls.right = true; break;
+      case 'ArrowUp': controls.up = true; break;
+      case ' ': controls.fire = true; break;
+    }
+  });
+  window.addEventListener('keyup', e => {
+    switch(e.key) {
+      case 'ArrowLeft': controls.left = false; break;
+      case 'ArrowRight': controls.right = false; break;
+      case 'ArrowUp': controls.up = false; break;
+      case ' ': controls.fire = false; break;
+    }
+  });
+
+  // Touch controls buttons
+  function bindButton(btn, controlName) {
+    btn.addEventListener('touchstart', e => {
+      e.preventDefault();
+      controls[controlName] = true;
+      btn.classList.add('pressed');
+    });
+    btn.addEventListener('touchend', e => {
+      e.preventDefault();
+      controls[controlName] = false;
+      btn.classList.remove('pressed');
+    });
+    btn.addEventListener('touchcancel', e => {
+      e.preventDefault();
+      controls[controlName] = false;
+      btn.classList.remove('pressed');
+    });
+  }
+  bindButton(leftBtn, 'left');
+  bindButton(rightBtn
