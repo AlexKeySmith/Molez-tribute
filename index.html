@@ -2,52 +2,92 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Molez-like Scrolling Cave</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>Molez-like Cave with D-Pad and Responsive Landscape</title>
 <style>
   html, body {
-    margin: 0; padding: 0; overflow: hidden; background: black; color: white;
-    height: 100%; width: 100%;
+    margin: 0; padding: 0; overflow: hidden; background: black; color: white; height: 100%; width: 100%;
   }
-  canvas {
+  #gameCanvas {
     display: block;
     background: #111;
-    margin: 0 auto;
+    touch-action: none;
   }
   #controls {
     position: fixed;
-    width: 100%;
-    bottom: 0;
-    left: 0;
+    bottom: 10px;
+    left: 50%;
+    transform: translateX(-50%);
     display: flex;
-    justify-content: space-around;
-    background: rgba(0,0,0,0.5);
-    padding: 10px 0;
+    align-items: center;
+    gap: 30px;
     user-select: none;
     touch-action: none;
   }
-  button {
-    background: #222;
-    border: 1px solid #555;
-    color: white;
-    font-size: 20px;
-    padding: 10px 15px;
-    border-radius: 5px;
+  #dpad {
+    position: relative;
+    width: 140px;
+    height: 140px;
+    background: rgba(20, 20, 20, 0.7);
+    border-radius: 10px;
+    display: grid;
+    grid-template-columns: 50px 40px 50px;
+    grid-template-rows: 50px 40px 50px;
+    gap: 10px;
   }
-  button.pressed {
-    background: #555;
+  .dpad-btn {
+    background: #222;
+    border: 2px solid #555;
+    border-radius: 10px;
+    touch-action: none;
+    user-select: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 26px;
+    color: white;
+    user-select: none;
+    transition: background-color 0.15s ease;
+  }
+  .dpad-btn.pressed {
+    background-color: #555;
+  }
+  #upBtn { grid-area: 1 / 2 / 2 / 3; }
+  #leftBtn { grid-area: 2 / 1 / 3 / 2; }
+  #downBtn { grid-area: 3 / 2 / 4 / 3; }
+  #rightBtn { grid-area: 2 / 3 / 3 / 4; }
+  #fireBtn {
+    background: #a33;
+    border: 2px solid #c55;
+    border-radius: 50%;
+    width: 80px;
+    height: 80px;
+    font-size: 24px;
+    color: white;
+    user-select: none;
+    touch-action: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.15s ease;
+  }
+  #fireBtn.pressed {
+    background-color: #d66;
   }
 </style>
 </head>
 <body>
 
-<canvas id="gameCanvas" width="640" height="480"></canvas>
+<canvas id="gameCanvas"></canvas>
 
 <div id="controls">
-  <button id="leftBtn">◀</button>
-  <button id="upBtn">▲</button>
+  <div id="dpad">
+    <button id="upBtn" class="dpad-btn">▲</button>
+    <button id="leftBtn" class="dpad-btn">◀</button>
+    <button id="downBtn" class="dpad-btn">▼</button>
+    <button id="rightBtn" class="dpad-btn">▶</button>
+  </div>
   <button id="fireBtn">Fire</button>
-  <button id="rightBtn">▶</button>
 </div>
 
 <script>
@@ -55,24 +95,42 @@
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
 
-  const WIDTH = canvas.width;
-  const HEIGHT = canvas.height;
-  const BLOCK_SIZE = 12;  // smaller blocks for cave vibe
-  const TERRAIN_ROWS = Math.floor(HEIGHT / BLOCK_SIZE);
-  const TERRAIN_COLS = 100; // wider terrain for scrolling
+  let WIDTH, HEIGHT;
 
+  const BLOCK_SIZE = 12;
+
+  let TERRAIN_ROWS, TERRAIN_COLS;
   let terrain = [];
 
   let players = [];
   let bullets = [];
 
-  // Scroll offset in pixels
   let scrollX = 0;
 
-  const controls = { left: false, right: false, up: false, fire: false };
+  const controls = { left: false, right: false, up: false, down: false, fire: false };
 
   function randInt(min, max) {
     return Math.floor(Math.random() * (max - min + 1)) + min;
+  }
+
+  function resize() {
+    // Fill entire screen for landscape, swap if portrait (we want landscape full screen)
+    if(window.innerWidth > window.innerHeight) {
+      WIDTH = window.innerWidth;
+      HEIGHT = window.innerHeight;
+    } else {
+      // force landscape by swapping width/height
+      WIDTH = window.innerHeight;
+      HEIGHT = window.innerWidth;
+    }
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
+
+    // Calculate terrain size to exactly fill canvas with BLOCK_SIZE pixels
+    TERRAIN_COLS = Math.floor(WIDTH / BLOCK_SIZE);
+    TERRAIN_ROWS = Math.floor(HEIGHT / BLOCK_SIZE);
+
+    generateTerrain();
   }
 
   function generateTerrain() {
@@ -80,22 +138,19 @@
     for(let r = 0; r < TERRAIN_ROWS; r++) {
       terrain[r] = [];
       for(let c = 0; c < TERRAIN_COLS; c++) {
-        // Create cave-like shape with some random noise
-        if (r > TERRAIN_ROWS - 5) {
-          terrain[r][c] = true; // solid bottom 5 rows
-        } else if (r > TERRAIN_ROWS - 10) {
-          // random blocks around bottom-middle area
+        if(r > TERRAIN_ROWS - 6) {
+          terrain[r][c] = true; // solid bottom 6 rows
+        } else if (r > TERRAIN_ROWS - 12) {
           terrain[r][c] = Math.random() < 0.3;
         } else {
-          // empty space upper part
           terrain[r][c] = false;
         }
       }
     }
 
-    // Create some tunnels/caves by clearing random patches
-    for(let i = 0; i < 150; i++) {
-      let cr = randInt(TERRAIN_ROWS - 15, TERRAIN_ROWS - 5);
+    // Create some caves/tunnels by clearing some blocks
+    for(let i=0; i< Math.floor(TERRAIN_ROWS*TERRAIN_COLS*0.15); i++) {
+      let cr = randInt(TERRAIN_ROWS - 15, TERRAIN_ROWS - 6);
       let cc = randInt(0, TERRAIN_COLS - 1);
       terrain[cr][cc] = false;
     }
@@ -106,10 +161,9 @@
     for(let r = 0; r < TERRAIN_ROWS; r++) {
       for(let c = 0; c < TERRAIN_COLS; c++) {
         if(terrain[r][c]) {
-          // draw blocks offset by scrollX
           const drawX = c * BLOCK_SIZE - scrollX;
           const drawY = r * BLOCK_SIZE;
-          if(drawX + BLOCK_SIZE < 0 || drawX > WIDTH) continue; // skip off screen
+          if(drawX + BLOCK_SIZE < 0 || drawX > WIDTH) continue;
           ctx.fillRect(drawX, drawY, BLOCK_SIZE, BLOCK_SIZE);
         }
       }
@@ -166,6 +220,9 @@
         this.speedY = -this.jumpForce;
         this.onGround = false;
       }
+    }
+    moveDown() {
+      // Optional future feature: crouch or drop through platforms
     }
     fire() {
       if(this.fireCooldown <= 0 && !this.isDead) {
@@ -312,18 +369,18 @@
     }
   }
 
-  // Input handling
+  // Bind buttons for touch and mouse events
   function bindButton(button, controlName) {
     button.addEventListener('touchstart', e => {
       e.preventDefault();
       controls[controlName] = true;
       button.classList.add('pressed');
-    });
+    }, {passive:false});
     button.addEventListener('touchend', e => {
       e.preventDefault();
       controls[controlName] = false;
       button.classList.remove('pressed');
-    });
+    }, {passive:false});
     button.addEventListener('mousedown', e => {
       e.preventDefault();
       controls[controlName] = true;
@@ -344,6 +401,7 @@
   bindButton(document.getElementById('leftBtn'), 'left');
   bindButton(document.getElementById('rightBtn'), 'right');
   bindButton(document.getElementById('upBtn'), 'up');
+  bindButton(document.getElementById('downBtn'), 'down'); // down currently unused but bound
   bindButton(document.getElementById('fireBtn'), 'fire');
 
   // Game loop functions
@@ -364,7 +422,6 @@
 
     // Update scrollX to follow player horizontally, clamp to terrain edges
     if(localPlayer) {
-      // center player horizontally but clamp so we don't scroll past terrain edges
       let targetScroll = localPlayer.x + localPlayer.w/2 - WIDTH/2;
       if(targetScroll < 0) targetScroll = 0;
       if(targetScroll > TERRAIN_COLS * BLOCK_SIZE - WIDTH) targetScroll = TERRAIN_COLS * BLOCK_SIZE - WIDTH;
@@ -386,19 +443,29 @@
   }
 
   function startGame() {
-    generateTerrain();
-
+    resize();
     players = [];
     players.push(new Player('local', 100, HEIGHT - 40, 'cyan'));
     players.push(new Player('bot1', 300, HEIGHT - 40, 'red', true));
     players.push(new Player('bot2', 500, HEIGHT - 40, 'lime', true));
-
     gameLoop();
   }
 
-  startGame();
+  // Resize and handle orientation change
+  window.addEventListener('resize', () => {
+    resize();
+  });
 
-  // fullscreen on tap
+  window.addEventListener('orientationchange', () => {
+    resize();
+  });
+
+  // Start game after page load
+  window.onload = () => {
+    startGame();
+  };
+
+  // Tap to fullscreen
   document.body.addEventListener('click', () => {
     if (!document.fullscreenElement) {
       document.documentElement.requestFullscreen();
