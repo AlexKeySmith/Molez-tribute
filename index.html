@@ -1,19 +1,35 @@
 <!DOCTYPE html>
 <html>
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>Simple Worms-like Local Multiplayer</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<title>Worms-like Multiplayer with Destructible Terrain</title>
 <style>
-  body {
-    margin:0; background:#222; color:#eee; font-family:sans-serif;
-    display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-height: 100vh;
+  body, html {
+    margin:0; padding:0; overflow:hidden;
+    background:#222; color:#eee; font-family:sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start;
+    height: 100vh;
     user-select: none;
+  }
+  #orientation-warning {
+    position: fixed;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    background: #000c;
+    color: #fff;
+    font-size: 24px;
+    display: flex; justify-content: center; align-items: center;
+    z-index: 1000;
+    text-align: center;
+    padding: 20px;
+    box-sizing: border-box;
   }
   canvas {
     background: #333;
     border: 2px solid #555;
     margin: 20px 0;
     touch-action: none;
+    max-width: 100vw;
+    max-height: 60vh;
   }
   .controls {
     display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
@@ -45,11 +61,27 @@
   .fire-btn {
     background: #d33 !important;
   }
+  #fullscreen-btn {
+    margin-bottom: 10px;
+    padding: 8px 16px;
+    font-size: 18px;
+    background: #0a84ff;
+    border: none;
+    border-radius: 8px;
+    color: white;
+    user-select: none;
+    cursor: pointer;
+  }
 </style>
 </head>
 <body>
 
-<canvas id="game" width="480" height="320"></canvas>
+<div id="orientation-warning" style="display:none;">
+  Please rotate your device to <strong>landscape</strong> for the best experience.
+</div>
+
+<button id="fullscreen-btn">Go Fullscreen</button>
+<canvas id="game" width="640" height="360"></canvas>
 
 <div class="controls">
   <div class="player-controls" id="player1-controls">
@@ -76,71 +108,132 @@
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
 
-  const GRAVITY = 0.5;
-  const GROUND_Y = canvas.height - 40;
+  const WIDTH = canvas.width;
+  const HEIGHT = canvas.height;
 
-  // Player structure
+  const GRAVITY = 0.5;
+  const TERRAIN_HEIGHT = 60; // height of terrain from bottom
+
+  // Terrain pixel data stored in offscreen canvas
+  const terrainCanvas = document.createElement("canvas");
+  terrainCanvas.width = WIDTH;
+  terrainCanvas.height = HEIGHT;
+  const terrainCtx = terrainCanvas.getContext("2d");
+
+  // Initialize terrain (simple green "ground" shape)
+  function initTerrain() {
+    terrainCtx.clearRect(0, 0, WIDTH, HEIGHT);
+    terrainCtx.fillStyle = "#654321";
+    terrainCtx.fillRect(0, HEIGHT - TERRAIN_HEIGHT, WIDTH, TERRAIN_HEIGHT);
+
+    // Add some bumps for fun
+    terrainCtx.fillStyle = "#4a3311";
+    for(let i=0; i<WIDTH; i+=40){
+      let bumpHeight = 20 + Math.sin(i/10)*10;
+      terrainCtx.fillRect(i, HEIGHT - TERRAIN_HEIGHT - bumpHeight, 40, bumpHeight);
+    }
+  }
+
+  initTerrain();
+
+  // Check if terrain pixel is solid (non-transparent)
+  function isTerrainSolid(x,y){
+    if (x < 0 || x >= WIDTH || y < 0 || y >= HEIGHT) return false;
+    const pixel = terrainCtx.getImageData(x, y, 1,1).data;
+    return pixel[3] > 128; // alpha > 128 means solid
+  }
+
+  // Remove terrain pixels in a circle (simulate explosion)
+  function destroyTerrain(cx, cy, radius){
+    const imgData = terrainCtx.getImageData(0,0, WIDTH, HEIGHT);
+    const data = imgData.data;
+    for(let y = Math.max(0, cy - radius); y < Math.min(HEIGHT, cy + radius); y++){
+      for(let x = Math.max(0, cx - radius); x < Math.min(WIDTH, cx + radius); x++){
+        const dx = x - cx;
+        const dy = y - cy;
+        if(dx*dx + dy*dy <= radius*radius){
+          const idx = (y*WIDTH + x)*4 + 3; // alpha channel index
+          data[idx] = 0; // make pixel fully transparent (destroyed)
+        }
+      }
+    }
+    terrainCtx.putImageData(imgData, 0, 0);
+  }
+
+  // Player class with terrain collision
   class Player {
     constructor(x, color) {
       this.x = x;
-      this.y = GROUND_Y;
+      this.y = HEIGHT - TERRAIN_HEIGHT;
       this.width = 20;
       this.height = 30;
       this.color = color;
       this.vx = 0;
       this.vy = 0;
-      this.onGround = true;
+      this.onGround = false;
       this.bullets = [];
       this.facing = 1; // 1 = right, -1 = left
-      this.cooldown = 0; // fire cooldown
+      this.cooldown = 0;
     }
     update() {
-      // Apply velocity
+      // Horizontal movement and friction
       this.x += this.vx;
-      this.y += this.vy;
+      this.vx *= 0.8;
 
-      // Gravity
-      if (!this.onGround) {
-        this.vy += GRAVITY;
+      // Check horizontal collision with terrain
+      if(this.collidesWithTerrain(this.x, this.y)) {
+        // Undo horizontal move if colliding
+        this.x -= this.vx;
+        this.vx = 0;
       }
 
-      // Ground collision
-      if (this.y >= GROUND_Y) {
-        this.y = GROUND_Y;
-        this.vy = 0;
-        this.onGround = true;
+      // Vertical movement & gravity
+      this.vy += GRAVITY;
+      this.y += this.vy;
+
+      // Collision vertical with terrain
+      if(this.collidesWithTerrain(this.x, this.y)) {
+        // Move player up until no collision
+        while(this.collidesWithTerrain(this.x, this.y) && this.y > 0){
+          this.y -= 1;
+          this.vy = 0;
+          this.onGround = true;
+        }
       } else {
         this.onGround = false;
       }
 
       // Keep inside canvas horizontally
       if (this.x < 0) this.x = 0;
-      if (this.x > canvas.width - this.width) this.x = canvas.width - this.width;
-
-      // Apply friction horizontally
-      this.vx *= 0.8;
+      if (this.x > WIDTH - this.width) this.x = WIDTH - this.width;
 
       if (this.cooldown > 0) this.cooldown--;
-      
+
       // Update bullets
       this.bullets = this.bullets.filter(b => !b.dead);
       this.bullets.forEach(b => b.update());
     }
+    collidesWithTerrain(x, y) {
+      // Check bottom corners of player box against terrain solidity
+      const bottomY = Math.floor(y);
+      const leftX = Math.floor(x);
+      const rightX = Math.floor(x + this.width - 1);
+      return isTerrainSolid(leftX, bottomY) || isTerrainSolid(rightX, bottomY);
+    }
     draw() {
-      // Player body
+      // Draw player body
       ctx.fillStyle = this.color;
       ctx.fillRect(this.x, this.y - this.height, this.width, this.height);
-
-      // Head
+      // Head circle
       ctx.beginPath();
-      ctx.arc(this.x + this.width/2, this.y - this.height - 10, 8, 0, Math.PI * 2);
+      ctx.arc(this.x + this.width / 2, this.y - this.height - 10, 8, 0, Math.PI * 2);
       ctx.fill();
 
       // Draw bullets
       this.bullets.forEach(b => b.draw());
     }
     jump() {
-      if (this.onGround) {
+      if(this.onGround){
         this.vy = -10;
         this.onGround = false;
       }
@@ -154,21 +247,20 @@
       this.facing = 1;
     }
     fire() {
-      if (this.cooldown === 0) {
+      if(this.cooldown === 0){
         const bullet = new Bullet(
-          this.x + this.width/2,
+          this.x + this.width / 2,
           this.y - this.height - 10,
           this.facing * 8,
           0,
           this.color
         );
         this.bullets.push(bullet);
-        this.cooldown = 30; // cooldown frames
+        this.cooldown = 30;
       }
     }
   }
 
-  // Bullet structure
   class Bullet {
     constructor(x, y, vx, vy, color) {
       this.x = x;
@@ -178,20 +270,28 @@
       this.radius = 5;
       this.color = color;
       this.dead = false;
+      this.explosionRadius = 20;
     }
     update() {
       this.x += this.vx;
       this.y += this.vy;
-
       this.vy += GRAVITY * 0.1;
 
-      // Check ground collision
-      if (this.y > GROUND_Y) {
+      // Check collision with terrain
+      if(isTerrainSolid(Math.floor(this.x), Math.floor(this.y))){
         this.dead = true;
+        destroyTerrain(Math.floor(this.x), Math.floor(this.y), this.explosionRadius);
+        return;
       }
 
-      // Check out of bounds
-      if (this.x < 0 || this.x > canvas.width) {
+      // Check collision with players (simple AABB)
+      if(checkPlayerHit(player1, this) || checkPlayerHit(player2, this)) {
+        this.dead = true;
+        destroyTerrain(Math.floor(this.x), Math.floor(this.y), this.explosionRadius);
+      }
+
+      // Out of bounds
+      if(this.x < 0 || this.x > WIDTH || this.y > HEIGHT){
         this.dead = true;
       }
     }
@@ -203,115 +303,106 @@
     }
   }
 
-  // Initialize players
-  const player1 = new Player(50, "#0af");
-  const player2 = new Player(canvas.width - 70, "#fa0");
+  function checkPlayerHit(player, bullet) {
+    return bullet.x > player.x &&
+           bullet.x < player.x + player.width &&
+           bullet.y > player.y - player.height &&
+           bullet.y < player.y;
+  }
 
-  // Input state
-  const input = {
-    p1_left: false, p1_right: false, p1_up: false, p1_fire: false,
-    p2_left: false, p2_right: false, p2_up: false, p2_fire: false,
+  const player1 = new Player(100, "cyan");
+  const player2 = new Player(500, "orange");
+
+  // Controls state
+  const keys = {
+    p1_left: false,
+    p1_up: false,
+    p1_right: false,
+    p1_fire: false,
+    p2_left: false,
+    p2_up: false,
+    p2_right: false,
+    p2_fire: false,
   };
 
-  // Setup buttons handlers
   function setupControls() {
-    const controlsMap = [
-      ["p1-left", "p1_left"], ["p1-right", "p1_right"], ["p1-up", "p1_up"], ["p1-fire", "p1_fire"],
-      ["p2-left", "p2_left"], ["p2-right", "p2_right"], ["p2-up", "p2_up"], ["p2-fire", "p2_fire"]
-    ];
-    controlsMap.forEach(([btnId, key]) => {
-      const btn = document.getElementById(btnId);
-      btn.addEventListener("touchstart", e => {
-        e.preventDefault();
-        input[key] = true;
-      });
-      btn.addEventListener("touchend", e => {
-        e.preventDefault();
-        input[key] = false;
-      });
-      // Also mouse for desktop testing
-      btn.addEventListener("mousedown", e => {
-        e.preventDefault();
-        input[key] = true;
-      });
-      btn.addEventListener("mouseup", e => {
-        e.preventDefault();
-        input[key] = false;
-      });
-      btn.addEventListener("mouseleave", e => {
-        e.preventDefault();
-        input[key] = false;
-      });
-    });
+    // Player 1 buttons
+    document.getElementById("p1-left").addEventListener("touchstart", e => { e.preventDefault(); keys.p1_left = true; });
+    document.getElementById("p1-left").addEventListener("touchend", e => { e.preventDefault(); keys.p1_left = false; });
 
-    // Keyboard support for desktop
+    document.getElementById("p1-up").addEventListener("touchstart", e => { e.preventDefault(); keys.p1_up = true; });
+    document.getElementById("p1-up").addEventListener("touchend", e => { e.preventDefault(); keys.p1_up = false; });
+
+    document.getElementById("p1-right").addEventListener("touchstart", e => { e.preventDefault(); keys.p1_right = true; });
+    document.getElementById("p1-right").addEventListener("touchend", e => { e.preventDefault(); keys.p1_right = false; });
+
+    document.getElementById("p1-fire").addEventListener("touchstart", e => { e.preventDefault(); keys.p1_fire = true; });
+    document.getElementById("p1-fire").addEventListener("touchend", e => { e.preventDefault(); keys.p1_fire = false; });
+
+    // Player 2 buttons
+    document.getElementById("p2-left").addEventListener("touchstart", e => { e.preventDefault(); keys.p2_left = true; });
+    document.getElementById("p2-left").addEventListener("touchend", e => { e.preventDefault(); keys.p2_left = false; });
+
+    document.getElementById("p2-up").addEventListener("touchstart", e => { e.preventDefault(); keys.p2_up = true; });
+    document.getElementById("p2-up").addEventListener("touchend", e => { e.preventDefault(); keys.p2_up = false; });
+
+    document.getElementById("p2-right").addEventListener("touchstart", e => { e.preventDefault(); keys.p2_right = true; });
+    document.getElementById("p2-right").addEventListener("touchend", e => { e.preventDefault(); keys.p2_right = false; });
+
+    document.getElementById("p2-fire").addEventListener("touchstart", e => { e.preventDefault(); keys.p2_fire = true; });
+    document.getElementById("p2-fire").addEventListener("touchend", e => { e.preventDefault(); keys.p2_fire = false; });
+
+    // Keyboard support for testing
     window.addEventListener("keydown", e => {
-      switch(e.key.toLowerCase()) {
-        case "a": input.p1_left = true; break;
-        case "d": input.p1_right = true; break;
-        case "w": input.p1_up = true; break;
-        case " ": input.p1_fire = true; break;
-        case "arrowleft": input.p2_left = true; break;
-        case "arrowright": input.p2_right = true; break;
-        case "arrowup": input.p2_up = true; break;
-        case "enter": input.p2_fire = true; break;
+      switch(e.code){
+        case "KeyA": keys.p1_left = true; break;
+        case "KeyW": keys.p1_up = true; break;
+        case "KeyD": keys.p1_right = true; break;
+        case "KeyS": keys.p1_fire = true; break;
+        case "ArrowLeft": keys.p2_left = true; break;
+        case "ArrowUp": keys.p2_up = true; break;
+        case "ArrowRight": keys.p2_right = true; break;
+        case "ArrowDown": keys.p2_fire = true; break;
       }
     });
     window.addEventListener("keyup", e => {
-      switch(e.key.toLowerCase()) {
-        case "a": input.p1_left = false; break;
-        case "d": input.p1_right = false; break;
-        case "w": input.p1_up = false; break;
-        case " ": input.p1_fire = false; break;
-        case "arrowleft": input.p2_left = false; break;
-        case "arrowright": input.p2_right = false; break;
-        case "arrowup": input.p2_up = false; break;
-        case "enter": input.p2_fire = false; break;
+      switch(e.code){
+        case "KeyA": keys.p1_left = false; break;
+        case "KeyW": keys.p1_up = false; break;
+        case "KeyD": keys.p1_right = false; break;
+        case "KeyS": keys.p1_fire = false; break;
+        case "ArrowLeft": keys.p2_left = false; break;
+        case "ArrowUp": keys.p2_up = false; break;
+        case "ArrowRight": keys.p2_right = false; break;
+        case "ArrowDown": keys.p2_fire = false; break;
       }
     });
   }
 
   function update() {
-    // Player 1 input
-    if (input.p1_left) player1.moveLeft();
-    if (input.p1_right) player1.moveRight();
-    if (input.p1_up) player1.jump();
-    if (!input.p1_left && !input.p1_right) player1.vx = 0;
-    if (input.p1_fire) player1.fire();
+    // Player 1 controls
+    if(keys.p1_left) player1.moveLeft();
+    if(keys.p1_right) player1.moveRight();
+    if(keys.p1_up) player1.jump();
+    if(keys.p1_fire) player1.fire();
 
-    // Player 2 input
-    if (input.p2_left) player2.moveLeft();
-    if (input.p2_right) player2.moveRight();
-    if (input.p2_up) player2.jump();
-    if (!input.p2_left && !input.p2_right) player2.vx = 0;
-    if (input.p2_fire) player2.fire();
+    // Player 2 controls
+    if(keys.p2_left) player2.moveLeft();
+    if(keys.p2_right) player2.moveRight();
+    if(keys.p2_up) player2.jump();
+    if(keys.p2_fire) player2.fire();
 
     player1.update();
     player2.update();
-
-    // Simple bullet collision check (no damage, just remove bullet)
-    player1.bullets.forEach(bullet => {
-      if (bullet.x > player2.x && bullet.x < player2.x + player2.width &&
-          bullet.y > player2.y - player2.height && bullet.y < player2.y) {
-        bullet.dead = true;
-      }
-    });
-    player2.bullets.forEach(bullet => {
-      if (bullet.x > player1.x && bullet.x < player1.x + player1.width &&
-          bullet.y > player1.y - player1.height && bullet.y < player1.y) {
-        bullet.dead = true;
-      }
-    });
-  }
-
-  function drawGround() {
-    ctx.fillStyle = "#654321";
-    ctx.fillRect(0, GROUND_Y, canvas.width, canvas.height - GROUND_Y);
   }
 
   function draw() {
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    drawGround();
+    ctx.clearRect(0, 0, WIDTH, HEIGHT);
+
+    // Draw terrain from offscreen canvas
+    ctx.drawImage(terrainCanvas, 0, 0);
+
+    // Draw players and bullets
     player1.draw();
     player2.draw();
   }
@@ -322,8 +413,34 @@
     requestAnimationFrame(loop);
   }
 
+  // Orientation handling
+  const orientationWarning = document.getElementById("orientation-warning");
+  function checkOrientation() {
+    if(window.innerWidth < window.innerHeight){
+      orientationWarning.style.display = "flex";
+    } else {
+      orientationWarning.style.display = "none";
+    }
+  }
+  window.addEventListener("resize", checkOrientation);
+  window.addEventListener("orientationchange", checkOrientation);
+  checkOrientation();
+
+  // Fullscreen toggle
+  const fsBtn = document.getElementById("fullscreen-btn");
+  fsBtn.addEventListener("click", () => {
+    if (!document.fullscreenElement) {
+      canvas.requestFullscreen().catch(err => {
+        alert(`Error attempting to enable fullscreen: ${err.message}`);
+      });
+    } else {
+      document.exitFullscreen();
+    }
+  });
+
   setupControls();
   loop();
+
 </script>
 
 </body>
