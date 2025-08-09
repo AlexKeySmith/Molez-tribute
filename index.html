@@ -1,105 +1,329 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Simple Mobile Demo</title>
-  <style>
-    body {
-      margin:0; background:#000; color:#fff; font-family:sans-serif;
-      display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh;
-    }
-    canvas {
-      background: #222;
-      border: 2px solid #555;
-      display: block;
-      margin-bottom: 20px;
-      touch-action: none;
-    }
-    .controls {
-      display: flex; gap: 10px;
-    }
-    button {
-      width: 60px; height: 60px;
-      font-size: 24px;
-      border-radius: 10px;
-      border: none;
-      background: #444;
-      color: white;
-      user-select: none;
-    }
-    button:active {
-      background: #0a84ff;
-    }
-  </style>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Simple Worms-like Local Multiplayer</title>
+<style>
+  body {
+    margin:0; background:#222; color:#eee; font-family:sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: flex-start; min-height: 100vh;
+    user-select: none;
+  }
+  canvas {
+    background: #333;
+    border: 2px solid #555;
+    margin: 20px 0;
+    touch-action: none;
+  }
+  .controls {
+    display: flex; gap: 12px; flex-wrap: wrap; justify-content: center;
+    max-width: 600px;
+  }
+  .player-controls {
+    background: #444;
+    padding: 10px;
+    border-radius: 10px;
+    min-width: 140px;
+  }
+  h3 {
+    margin: 6px 0 10px 0;
+    text-align: center;
+  }
+  button {
+    width: 50px; height: 50px;
+    font-size: 20px;
+    margin: 4px;
+    border-radius: 8px;
+    border: none;
+    background: #555;
+    color: #eee;
+    user-select: none;
+  }
+  button:active {
+    background: #0a84ff;
+  }
+  .fire-btn {
+    background: #d33 !important;
+  }
+</style>
 </head>
 <body>
 
-<canvas id="game" width="300" height="200"></canvas>
+<canvas id="game" width="480" height="320"></canvas>
 
 <div class="controls">
-  <button id="left">◀</button>
-  <button id="up">▲</button>
-  <button id="down">▼</button>
-  <button id="right">▶</button>
+  <div class="player-controls" id="player1-controls">
+    <h3>Player 1</h3>
+    <div style="text-align:center;">
+      <button id="p1-left">◀</button>
+      <button id="p1-up">▲</button>
+      <button id="p1-right">▶</button>
+    </div>
+    <button id="p1-fire" class="fire-btn" style="width:100%; margin-top:10px;">Fire</button>
+  </div>
+  <div class="player-controls" id="player2-controls">
+    <h3>Player 2</h3>
+    <div style="text-align:center;">
+      <button id="p2-left">◀</button>
+      <button id="p2-up">▲</button>
+      <button id="p2-right">▶</button>
+    </div>
+    <button id="p2-fire" class="fire-btn" style="width:100%; margin-top:10px;">Fire</button>
+  </div>
 </div>
 
 <script>
-  const canvas = document.getElementById('game');
-  const ctx = canvas.getContext('2d');
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
 
-  let x = canvas.width / 2;
-  let y = canvas.height / 2;
-  const speed = 4;
+  const GRAVITY = 0.5;
+  const GROUND_Y = canvas.height - 40;
 
-  let keys = { left: false, up: false, right: false, down: false };
+  // Player structure
+  class Player {
+    constructor(x, color) {
+      this.x = x;
+      this.y = GROUND_Y;
+      this.width = 20;
+      this.height = 30;
+      this.color = color;
+      this.vx = 0;
+      this.vy = 0;
+      this.onGround = true;
+      this.bullets = [];
+      this.facing = 1; // 1 = right, -1 = left
+      this.cooldown = 0; // fire cooldown
+    }
+    update() {
+      // Apply velocity
+      this.x += this.vx;
+      this.y += this.vy;
 
-  // Buttons control
-  ['left', 'up', 'down', 'right'].forEach(dir => {
-    const btn = document.getElementById(dir);
-    btn.addEventListener('touchstart', e => {
-      e.preventDefault();
-      keys[dir] = true;
-    });
-    btn.addEventListener('touchend', e => {
-      e.preventDefault();
-      keys[dir] = false;
-    });
-  });
+      // Gravity
+      if (!this.onGround) {
+        this.vy += GRAVITY;
+      }
 
-  // Also support keyboard arrows if testing on PC
-  window.addEventListener('keydown', e => {
-    if (e.key === 'ArrowLeft') keys.left = true;
-    if (e.key === 'ArrowUp') keys.up = true;
-    if (e.key === 'ArrowRight') keys.right = true;
-    if (e.key === 'ArrowDown') keys.down = true;
-  });
-  window.addEventListener('keyup', e => {
-    if (e.key === 'ArrowLeft') keys.left = false;
-    if (e.key === 'ArrowUp') keys.up = false;
-    if (e.key === 'ArrowRight') keys.right = false;
-    if (e.key === 'ArrowDown') keys.down = false;
-  });
+      // Ground collision
+      if (this.y >= GROUND_Y) {
+        this.y = GROUND_Y;
+        this.vy = 0;
+        this.onGround = true;
+      } else {
+        this.onGround = false;
+      }
 
-  function gameLoop() {
-    if (keys.left) x -= speed;
-    if (keys.right) x += speed;
-    if (keys.up) y -= speed;
-    if (keys.down) y += speed;
+      // Keep inside canvas horizontally
+      if (this.x < 0) this.x = 0;
+      if (this.x > canvas.width - this.width) this.x = canvas.width - this.width;
 
-    // Clamp inside canvas
-    x = Math.max(10, Math.min(canvas.width - 10, x));
-    y = Math.max(10, Math.min(canvas.height - 10, y));
+      // Apply friction horizontally
+      this.vx *= 0.8;
 
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (this.cooldown > 0) this.cooldown--;
+      
+      // Update bullets
+      this.bullets = this.bullets.filter(b => !b.dead);
+      this.bullets.forEach(b => b.update());
+    }
+    draw() {
+      // Player body
+      ctx.fillStyle = this.color;
+      ctx.fillRect(this.x, this.y - this.height, this.width, this.height);
 
-    // Draw player square
-    ctx.fillStyle = '#0af';
-    ctx.fillRect(x - 10, y - 10, 20, 20);
+      // Head
+      ctx.beginPath();
+      ctx.arc(this.x + this.width/2, this.y - this.height - 10, 8, 0, Math.PI * 2);
+      ctx.fill();
 
-    requestAnimationFrame(gameLoop);
+      // Draw bullets
+      this.bullets.forEach(b => b.draw());
+    }
+    jump() {
+      if (this.onGround) {
+        this.vy = -10;
+        this.onGround = false;
+      }
+    }
+    moveLeft() {
+      this.vx = -4;
+      this.facing = -1;
+    }
+    moveRight() {
+      this.vx = 4;
+      this.facing = 1;
+    }
+    fire() {
+      if (this.cooldown === 0) {
+        const bullet = new Bullet(
+          this.x + this.width/2,
+          this.y - this.height - 10,
+          this.facing * 8,
+          0,
+          this.color
+        );
+        this.bullets.push(bullet);
+        this.cooldown = 30; // cooldown frames
+      }
+    }
   }
 
-  gameLoop();
+  // Bullet structure
+  class Bullet {
+    constructor(x, y, vx, vy, color) {
+      this.x = x;
+      this.y = y;
+      this.vx = vx;
+      this.vy = vy;
+      this.radius = 5;
+      this.color = color;
+      this.dead = false;
+    }
+    update() {
+      this.x += this.vx;
+      this.y += this.vy;
+
+      this.vy += GRAVITY * 0.1;
+
+      // Check ground collision
+      if (this.y > GROUND_Y) {
+        this.dead = true;
+      }
+
+      // Check out of bounds
+      if (this.x < 0 || this.x > canvas.width) {
+        this.dead = true;
+      }
+    }
+    draw() {
+      ctx.fillStyle = this.color;
+      ctx.beginPath();
+      ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  // Initialize players
+  const player1 = new Player(50, "#0af");
+  const player2 = new Player(canvas.width - 70, "#fa0");
+
+  // Input state
+  const input = {
+    p1_left: false, p1_right: false, p1_up: false, p1_fire: false,
+    p2_left: false, p2_right: false, p2_up: false, p2_fire: false,
+  };
+
+  // Setup buttons handlers
+  function setupControls() {
+    const controlsMap = [
+      ["p1-left", "p1_left"], ["p1-right", "p1_right"], ["p1-up", "p1_up"], ["p1-fire", "p1_fire"],
+      ["p2-left", "p2_left"], ["p2-right", "p2_right"], ["p2-up", "p2_up"], ["p2-fire", "p2_fire"]
+    ];
+    controlsMap.forEach(([btnId, key]) => {
+      const btn = document.getElementById(btnId);
+      btn.addEventListener("touchstart", e => {
+        e.preventDefault();
+        input[key] = true;
+      });
+      btn.addEventListener("touchend", e => {
+        e.preventDefault();
+        input[key] = false;
+      });
+      // Also mouse for desktop testing
+      btn.addEventListener("mousedown", e => {
+        e.preventDefault();
+        input[key] = true;
+      });
+      btn.addEventListener("mouseup", e => {
+        e.preventDefault();
+        input[key] = false;
+      });
+      btn.addEventListener("mouseleave", e => {
+        e.preventDefault();
+        input[key] = false;
+      });
+    });
+
+    // Keyboard support for desktop
+    window.addEventListener("keydown", e => {
+      switch(e.key.toLowerCase()) {
+        case "a": input.p1_left = true; break;
+        case "d": input.p1_right = true; break;
+        case "w": input.p1_up = true; break;
+        case " ": input.p1_fire = true; break;
+        case "arrowleft": input.p2_left = true; break;
+        case "arrowright": input.p2_right = true; break;
+        case "arrowup": input.p2_up = true; break;
+        case "enter": input.p2_fire = true; break;
+      }
+    });
+    window.addEventListener("keyup", e => {
+      switch(e.key.toLowerCase()) {
+        case "a": input.p1_left = false; break;
+        case "d": input.p1_right = false; break;
+        case "w": input.p1_up = false; break;
+        case " ": input.p1_fire = false; break;
+        case "arrowleft": input.p2_left = false; break;
+        case "arrowright": input.p2_right = false; break;
+        case "arrowup": input.p2_up = false; break;
+        case "enter": input.p2_fire = false; break;
+      }
+    });
+  }
+
+  function update() {
+    // Player 1 input
+    if (input.p1_left) player1.moveLeft();
+    if (input.p1_right) player1.moveRight();
+    if (input.p1_up) player1.jump();
+    if (!input.p1_left && !input.p1_right) player1.vx = 0;
+    if (input.p1_fire) player1.fire();
+
+    // Player 2 input
+    if (input.p2_left) player2.moveLeft();
+    if (input.p2_right) player2.moveRight();
+    if (input.p2_up) player2.jump();
+    if (!input.p2_left && !input.p2_right) player2.vx = 0;
+    if (input.p2_fire) player2.fire();
+
+    player1.update();
+    player2.update();
+
+    // Simple bullet collision check (no damage, just remove bullet)
+    player1.bullets.forEach(bullet => {
+      if (bullet.x > player2.x && bullet.x < player2.x + player2.width &&
+          bullet.y > player2.y - player2.height && bullet.y < player2.y) {
+        bullet.dead = true;
+      }
+    });
+    player2.bullets.forEach(bullet => {
+      if (bullet.x > player1.x && bullet.x < player1.x + player1.width &&
+          bullet.y > player1.y - player1.height && bullet.y < player1.y) {
+        bullet.dead = true;
+      }
+    });
+  }
+
+  function drawGround() {
+    ctx.fillStyle = "#654321";
+    ctx.fillRect(0, GROUND_Y, canvas.width, canvas.height - GROUND_Y);
+  }
+
+  function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    drawGround();
+    player1.draw();
+    player2.draw();
+  }
+
+  function loop() {
+    update();
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  setupControls();
+  loop();
 </script>
 
 </body>
