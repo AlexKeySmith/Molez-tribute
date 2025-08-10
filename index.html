@@ -1,398 +1,404 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>MoleZ with Grapple & Aim</title>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no" />
+<title>MoleZ • Grapple Swing + Bots</title>
 <style>
-  * { box-sizing:border-box; margin:0; padding:0; }
-  html, body { height:100%; overflow:hidden; }
-  body { background:#081221; color:#e5eaf5; font-family:sans-serif; }
-  canvas { display:block; width:100%; height:100%; background:#03101c; }
-  .hud {
-    position:absolute; top:10px; left:10px; right:10px;
-    display:flex; justify-content:space-between; z-index:10;
-    pointer-events:none; font-size:14px;
-  }
-  .ctrl-area {
-    position:absolute; bottom:10px; left:10px; right:10px;
-    display:flex; justify-content:space-between; z-index:10;
-    pointer-events:none;
-  }
-  .dpad, .actions { display:flex; flex-direction:column; gap:6px; pointer-events:auto; }
-  .dpad-row { display:flex; gap:6px; justify-content:center; }
-  .btn {
-    width:48px; height:48px; border-radius:8px;
-    background:#14345a; border:1px solid #285180;
-    display:flex; align-items:center; justify-content:center;
-    color:#e5eaf5; font-size:20px; user-select:none; cursor:pointer;
-  }
-  .act-btn {
-    width:64px; height:50px; background:#355a86; border:1px solid #4e7aa7;
-    font-size:14px;
-  }
-  .btn:active { filter:brightness(1.2); }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%;overflow:hidden;background:#081221;color:#e6eaf5;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif}
+  canvas{display:block;width:100%;height:100%;background:#03101c}
+  .hud{position:absolute;top:8px;left:8px;right:8px;display:flex;justify-content:space-between;gap:8px;z-index:5;pointer-events:none}
+  .hud > div{pointer-events:auto}
+  .pill{background:#102844;border:1px solid #2b4e7c;padding:6px 10px;border-radius:8px;font-size:12px}
+  .controls{position:absolute;left:10px;right:10px;bottom:10px;display:flex;justify-content:space-between;gap:12px;z-index:6;pointer-events:none}
+  .dpad,.actions{pointer-events:auto;display:flex;flex-direction:column;gap:6px}
+  .row{display:flex;gap:6px;justify-content:center}
+  .btn{width:48px;height:48px;border-radius:8px;background:#15355c;border:1px solid #2c5588;color:#e6eaf5;display:flex;align-items:center;justify-content:center;font-weight:600}
+  .btn:active{filter:brightness(1.2)}
+  .act{width:68px;height:50px}
 </style>
 </head>
 <body>
-<canvas id="canvas"></canvas>
+<canvas id="cv"></canvas>
 
 <div class="hud">
-  <div>
-    <span id="timeLabel">Time: 120</span> |
-    <span id="scoreLabel">Score: 0</span>
-  </div>
-  <div>
-    <button id="resetBtn" style="pointer-events:auto;padding:4px 10px;">Reset</button>
-  </div>
+  <div class="pill">Time: <span id="time">120</span> | Score: <span id="score">0</span></div>
+  <div class="pill">Players: <span id="pcount">0</span> | Bots: <span id="bcount">0</span> <button id="reset" class="pill" style="margin-left:8px;cursor:pointer;">Reset</button></div>
 </div>
 
-<div class="ctrl-area">
+<!-- Mobile controls -->
+<div class="controls">
   <div class="dpad">
-    <div class="dpad-row">
-      <div></div>
-      <div class="btn" id="btnUp">▲</div>
-      <div></div>
-    </div>
-    <div class="dpad-row">
-      <div class="btn" id="btnLeft">◀</div>
-      <div class="btn" id="btnDown">▼</div>
-      <div class="btn" id="btnRight">▶</div>
-    </div>
+    <div class="row"><div></div><button class="btn" id="u">▲</button><div></div></div>
+    <div class="row"><button class="btn" id="l">◀</button><button class="btn" id="d">▼</button><button class="btn" id="r">▶</button></div>
   </div>
   <div class="actions">
-    <div class="btn act-btn" id="btnJump">Jump</div>
-    <div class="btn act-btn" id="btnFire">Fire</div>
-    <div class="btn act-btn" id="btnGrapple">Grapple</div>
+    <button class="btn act" id="jump">Jump</button>
+    <button class="btn act" id="fire">Fire</button>
+    <button class="btn act" id="hook">Grapple</button>
   </div>
 </div>
 
 <script>
-// Basic MoleZ-like engine with aiming and grappling
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
-window.addEventListener('resize', resize); resize();
-
-// Terrain grid
-const CELL = 4; const COLS = 300; const ROWS = 60;
-let terrain = [];
-
-// Game state
-let players = [];
-let bullets = [];
-let ropes = [];
-let timeLeft = 120;
-let score = 0;
-let running = true;
-
-// Player class
-class Player {
-  constructor(x,y,color) {
-    this.x=x; this.y=y; this.vx=0; this.vy=0;
-    this.w=12; this.h=12; this.c=color;
-    this.onGround=false;
-    this.jumpCooldown=0; this.fireCooldown=0; this.grappleCooldown=0;
-    this.aim = 0; // radians
-    this.rope = null;
+(() => {
+  // ---------- Canvas ----------
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d');
+  const DPR = Math.min(2, window.devicePixelRatio||1);
+  let W=0,H=0;
+  function resize(){
+    W=window.innerWidth; H=window.innerHeight;
+    cv.width = Math.floor(W*DPR); cv.height = Math.floor(H*DPR);
+    cv.style.width=W+'px'; cv.style.height=H+'px';
+    ctx.setTransform(DPR,0,0,DPR,0,0);
   }
-  input(input) {
-    const speed = 1.5;
-    if(input.left) { this.vx = -speed; }
-    if(input.right) { this.vx = speed; }
-    if(!input.left && !input.right) { this.vx *= 0.85; }
-    // tilt gun
-    const aimStep = 0.07;
-    if(input.up) this.aim -= aimStep;
-    if(input.down) this.aim += aimStep;
-    // limit aim between -pi/2 and pi/2
-    this.aim = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.aim));
-    // jump
-    if(input.jump && this.onGround && this.jumpCooldown<=0) {
-      this.vy = -5; this.onGround=false; this.jumpCooldown=15;
+  window.addEventListener('resize', resize, {passive:true}); resize();
+
+  // ---------- UI ----------
+  const timeEl = document.getElementById('time');
+  const scoreEl = document.getElementById('score');
+  const pcountEl = document.getElementById('pcount');
+  const bcountEl = document.getElementById('bcount');
+  document.getElementById('reset').onclick = () => start();
+
+  // ---------- Map / Terrain ----------
+  const CELL = 4, COLS = 360, ROWS = 160;
+  let terrain;
+  function genTerrain(){
+    const g = Array.from({length:ROWS},()=>new Uint8Array(COLS));
+    for(let y=0;y<ROWS;y++){
+      for(let x=0;x<COLS;x++){
+        const base = y<ROWS*0.45 ? 0 : Math.random()<0.55 ? 1:0;
+        g[y][x]=base;
+      }
     }
-    // fire bullet
-    if(input.fire && this.fireCooldown<=0) {
-      this.fire(); this.fireCooldown = 20;
+    for(let s=0;s<4;s++){
+      const n = Array.from({length:ROWS},()=>new Uint8Array(COLS));
+      for(let y=1;y<ROWS-1;y++){
+        for(let x=1;x<COLS-1;x++){
+          let c=0;
+          for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++) if(g[y+dy][x+dx]) c++;
+          n[y][x]= c>=5 ? 1:0;
+        }
+      }
+      for(let y=1;y<ROWS-1;y++) for(let x=1;x<COLS-1;x++) g[y][x]=n[y][x];
     }
-    // grapple
-    if(input.grapple && this.grappleCooldown<=0) {
-      this.toggleGrapple(); this.grappleCooldown = 20;
-    }
-    this.jumpCooldown=Math.max(0,this.jumpCooldown-1);
-    this.fireCooldown=Math.max(0,this.fireCooldown-1);
-    this.grappleCooldown=Math.max(0,this.grappleCooldown-1);
+    for(let y=Math.floor(ROWS*0.82);y<ROWS;y++) for(let x=0;x<COLS;x++) g[y][x]=1;
+    return g;
   }
-  fire() {
-    const muzzleX = this.x + this.w/2 + Math.cos(this.aim)*6;
-    const muzzleY = this.y + this.h/2 + Math.sin(this.aim)*6;
-    const speed = 2.5;
-    bullets.push(new Bullet(muzzleX,muzzleY,Math.cos(this.aim)*speed,Math.sin(this.aim)*speed,this));
+  function isSolid(px,py){
+    const cx=(px/CELL)|0, cy=(py/CELL)|0;
+    if(cx<0||cy<0||cx>=COLS||cy>=ROWS) return true;
+    return terrain[cy][cx]!==0;
   }
-  toggleGrapple() {
-    if(this.rope) {
-      this.rope.detach();
-    } else {
-      const c = this.getCenter();
-      const maxLen = 200;
-      const step = 4;
-      for(let t=0; t<maxLen; t+=step) {
-        const tx = c.x + Math.cos(this.aim)*t;
-        const ty = c.y + Math.sin(this.aim)*t;
-        if(isSolid(tx,ty)) {
-          this.rope = new Rope(this, {x:tx,y:ty});
-          ropes.push(this.rope);
-          break;
+  function carve(px,py,rad){
+    const cx=(px/CELL)|0, cy=(py/CELL)|0, rr=Math.ceil(rad/CELL);
+    for(let y=cy-rr;y<=cy+rr;y++){
+      for(let x=cx-rr;x<=cx+rr;x++){
+        if(x<0||y<0||x>=COLS||y>=ROWS) continue;
+        const dx=x-cx, dy=y-cy;
+        if(dx*dx+dy*dy <= (rad/CELL)*(rad/CELL)) terrain[y][x]=0;
+      }
+    }
+  }
+
+  // ---------- Entities ----------
+  const GRAV=0.28;
+  let players=[], bullets=[], ropes=[];
+  let timeLeft=120, score=0, running=true;
+  let cameraX=0;
+
+  class Player{
+    constructor(x,y,color,isBot=false){
+      this.x=x; this.y=y; this.vx=0; this.vy=0; this.w=12; this.h=12;
+      this.color=color; this.isBot=isBot; this.aim=0; this.onGround=false;
+      this.jumpCd=0; this.fireCd=0; this.hookCd=0; this.rope=null;
+      this.hp=100;
+    }
+    center(){ return {x:this.x+this.w/2,y:this.y+this.h/2}; }
+    applyInput(inp){
+      const speed=1.6;
+      if(inp.left) this.vx=-speed;
+      if(inp.right) this.vx=speed;
+      if(!inp.left && !inp.right) this.vx*=0.86;
+      const aimStep = 0.06;
+      if(inp.aimUp) this.aim -= aimStep;
+      if(inp.aimDown) this.aim += aimStep;
+      this.aim = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.aim));
+      if(inp.jump && this.onGround && this.jumpCd<=0){ this.vy=-5.2; this.onGround=false; this.jumpCd=14; }
+      if(inp.fire && this.fireCd<=0){ this.fire(); this.fireCd=14; }
+      if(inp.grapple && this.hookCd<=0){ this.toggleGrapple(); this.hookCd=16; }
+      this.jumpCd=Math.max(0,this.jumpCd-1);
+      this.fireCd=Math.max(0,this.fireCd-1);
+      this.hookCd=Math.max(0,this.hookCd-1);
+    }
+    thinkBot(){
+      if(!this.isBot) return;
+      // pick closest enemy
+      let target=null, best=1e9;
+      for(const p of players){ if(p===this||p.hp<=0) continue; const dx=p.x-this.x, dy=p.y-this.y, d=dx*dx+dy*dy; if(d<best){best=d; target=p;} }
+      const inp = {left:false,right:false,aimUp:false,aimDown:false,jump:false,fire:false,grapple:false};
+      // wander
+      if(Math.random()<0.02){ this._dir = (Math.random()<0.5?-1:1); }
+      if(this._dir<0) inp.left=true; else inp.right=true;
+      // small jumps to keep moving
+      if(this.onGround && Math.random()<0.02) inp.jump=true;
+      // aim at target if visible
+      if(target){
+        const c=this.center(), tc=target.center();
+        const ang = Math.atan2(tc.y - c.y, tc.x - c.x);
+        if(ang < this.aim-0.05) inp.aimUp=true;
+        if(ang > this.aim+0.05) inp.aimDown=true;
+        if(Math.random()<0.06) inp.fire=true;
+        // occasional grapple upwards to ceilings
+        if(!this.rope && Math.random()<0.01){
+          const upAng = -Math.PI/2 + (Math.random()*0.6 - 0.3);
+          this.aim = upAng; inp.grapple=true;
+        }
+        if(this.rope && Math.random()<0.005) inp.grapple=true;
+      }
+      this.applyInput(inp);
+    }
+    fire(){
+      const c=this.center();
+      const speed=3.2;
+      bullets.push(new Bullet(
+        c.x + Math.cos(this.aim)*8,
+        c.y + Math.sin(this.aim)*8,
+        Math.cos(this.aim)*speed,
+        Math.sin(this.aim)*speed,
+        this
+      ));
+    }
+    toggleGrapple(){
+      if(this.rope){ this.rope.detach(); return; }
+      const c=this.center(), maxLen=260, step=4;
+      for(let t=8;t<maxLen;t+=step){
+        const tx=c.x+Math.cos(this.aim)*t, ty=c.y+Math.sin(this.aim)*t;
+        if(isSolid(tx,ty)){ const r=new Rope(this,{x:tx,y:ty},Math.max(80,Math.min(t,180))); this.rope=r; ropes.push(r); break; }
+      }
+    }
+    update(){
+      // gravity only if not fully constrained
+      this.vy += GRAV;
+      // rope constraint updates inside rope.update()
+      // integrate
+      this.x += this.vx;
+      if(hitSolidAABB(this.x,this.y,this.w,this.h)){ this.x -= this.vx; this.vx=0; }
+      this.y += this.vy;
+      if(hitSolidAABB(this.x,this.y,this.w,this.h)){
+        if(this.vy>0){ // landing
+          while(hitSolidAABB(this.x,this.y,this.w,this.h)) this.y -= 1;
+          this.onGround=true;
+        }
+        this.vy=0;
+      } else this.onGround=false;
+
+      // confine to map
+      this.x = Math.max(0, Math.min(this.x, COLS*CELL - this.w));
+      this.y = Math.max(0, Math.min(this.y, ROWS*CELL - this.h));
+    }
+    draw(){
+      ctx.fillStyle=this.color;
+      ctx.fillRect(this.x-cameraX,this.y,this.w,this.h);
+      // gun
+      const c=this.center();
+      ctx.strokeStyle=this.color; ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.moveTo(c.x-cameraX,c.y);
+      ctx.lineTo(c.x-cameraX + Math.cos(this.aim)*16, c.y + Math.sin(this.aim)*16);
+      ctx.stroke();
+      // HP bar
+      ctx.fillStyle='rgba(255,0,40,.6)';
+      ctx.fillRect(this.x-cameraX, this.y-6, 20, 3);
+      ctx.fillStyle='rgba(40,255,120,.9)';
+      ctx.fillRect(this.x-cameraX, this.y-6, 20*(Math.max(0,this.hp)/100), 3);
+    }
+  }
+
+  function hitSolidAABB(x,y,w,h){
+    return isSolid(x,y) || isSolid(x+w,y) || isSolid(x,y+h) || isSolid(x+w,y+h);
+  }
+
+  class Bullet{
+    constructor(x,y,vx,vy,owner){ this.x=x; this.y=y; this.vx=vx; this.vy=vy; this.r=2.5; this.life=200; this.owner=owner; }
+    update(){
+      this.vy += 0.12;
+      this.x += this.vx; this.y += this.vy;
+      if(isSolid(this.x,this.y)){ carve(this.x,this.y,10); this.life=0; return; }
+      for(const p of players){
+        if(p===this.owner || p.hp<=0) continue;
+        const dx=p.x+p.w/2 - this.x, dy=p.y+p.h/2 - this.y;
+        if(dx*dx+dy*dy < (this.r+6)*(this.r+6)){ p.hp=Math.max(0,p.hp-18); carve(this.x,this.y,12); this.life=0; score++; break; }
+      }
+      this.life--;
+    }
+    draw(){
+      ctx.fillStyle='#ffe27a'; ctx.beginPath(); ctx.arc(this.x-cameraX,this.y,this.r,0,Math.PI*2); ctx.fill();
+    }
+  }
+
+  // NEW: physically-constrained rope for real swinging
+  class Rope{
+    constructor(player, anchor, len){
+      this.p=player; this.anchor={x:anchor.x,y:anchor.y}; this.len=len||140; this.damp=0.992;
+    }
+    update(){
+      const c=this.p.center();
+      let dx=this.anchor.x - c.x, dy=this.anchor.y - c.y;
+      let d=Math.hypot(dx,dy)||0.0001;
+      const nx=dx/d, ny=dy/d;
+
+      // If stretched beyond length, snap to circle (constraint)
+      if(d>this.len){
+        // move player so center lies exactly on circle
+        const targetX=this.anchor.x - nx*this.len;
+        const targetY=this.anchor.y - ny*this.len;
+        const shiftX = targetX - c.x;
+        const shiftY = targetY - c.y;
+        this.p.x += shiftX; this.p.y += shiftY;
+
+        // remove outward radial velocity (keep tangential for swing)
+        const vdot = (this.p.vx)*nx + (this.p.vy)*ny;
+        if(vdot>0){ this.p.vx -= nx*vdot; this.p.vy -= ny*vdot; }
+      }
+
+      // slight damping
+      this.p.vx *= this.damp; this.p.vy = this.p.vy*this.damp + GRAV*0.15;
+
+      // Player pumping: add tangential impulse with left/right
+      const tx = -ny, ty = nx; // tangent vector
+      if(input.left) { this.p.vx += tx*0.06; this.p.vy += ty*0.06; }
+      if(input.right){ this.p.vx -= tx*0.06; this.p.vy -= ty*0.06; }
+
+      // detach if anchor tile disappears
+      const ax=(this.anchor.x/CELL)|0, ay=(this.anchor.y/CELL)|0;
+      if(ay<0||ay>=ROWS||ax<0||ax>=COLS || terrain[ay][ax]===0){ this.detach(); }
+    }
+    detach(){ if(this.p.rope===this) this.p.rope=null; const i=ropes.indexOf(this); if(i>=0) ropes.splice(i,1); }
+    draw(){
+      const c=this.p.center();
+      ctx.strokeStyle='#84d9ff'; ctx.lineWidth=2;
+      ctx.beginPath(); ctx.moveTo(c.x-cameraX,c.y); ctx.lineTo(this.anchor.x-cameraX,this.anchor.y); ctx.stroke();
+    }
+  }
+
+  // ---------- Input ----------
+  const input = {left:false,right:false,aimUp:false,aimDown:false,jump:false,fire:false,grapple:false};
+  window.addEventListener('keydown',e=>{
+    const k=e.key.toLowerCase();
+    if(k==='arrowleft'||k==='a') input.left=true;
+    if(k==='arrowright'||k==='d') input.right=true;
+    if(k==='arrowup'||k==='w') input.aimUp=true;
+    if(k==='arrowdown'||k==='s') input.aimDown=true;
+    if(k===' ') input.jump=true;
+    if(k==='f') input.fire=true;
+    if(k==='g') input.grapple=true;
+  });
+  window.addEventListener('keyup',e=>{
+    const k=e.key.toLowerCase();
+    if(k==='arrowleft'||k==='a') input.left=false;
+    if(k==='arrowright'||k==='d') input.right=false;
+    if(k==='arrowup'||k==='w') input.aimUp=false;
+    if(k==='arrowdown'||k==='s') input.aimDown=false;
+    if(k===' ') input.jump=false;
+    if(k==='f') input.fire=false;
+    if(k==='g') input.grapple=false;
+  });
+
+  // Touch bindings
+  const bind = (id,downKey) => {
+    const el=document.getElementById(id);
+    const set=(v)=>{ input[downKey]=v; };
+    ['touchstart','mousedown'].forEach(ev=>el.addEventListener(ev,e=>{e.preventDefault();set(true);} ,{passive:false}));
+    ['touchend','mouseup','mouseleave'].forEach(ev=>el.addEventListener(ev,e=>{e.preventDefault();set(false);},{passive:false}));
+  };
+  bind('l','left'); bind('r','right'); bind('u','aimUp'); bind('d','aimDown');
+  bind('jump','jump'); bind('fire','fire'); bind('hook','grapple');
+
+  // ---------- Game loop ----------
+  function start(){
+    terrain = genTerrain();
+    players = [];
+    bullets = []; ropes = [];
+    timeLeft = 120; score=0; running=true;
+
+    // Spawn human + 3 bots
+    const spawnX=[30, 600, 900, 1200];
+    const colors=['#e6c275','#7dc9ff','#9af59b','#ff93c1'];
+    for(let i=0;i<4;i++){
+      const px = spawnX[i];
+      let py = 0;
+      // drop to ground
+      for(let y=0;y<ROWS*CELL-20;y++){
+        if(isSolid(px, y+20)){ py=y-20; break; }
+      }
+      players.push(new Player(px, Math.max(40,py), colors[i], i!==0));
+    }
+  }
+
+  function update(){
+    if(!running) return;
+    timeLeft -= 1/60; if(timeLeft<=0){ timeLeft=0; running=false; }
+
+    // AI
+    for(const p of players){ if(p.isBot && p.hp>0) p.thinkBot(); }
+
+    // Human input
+    const me = players[0];
+    if(me && me.hp>0) me.applyInput({left:input.left,right:input.right,aimUp:input.aimUp,aimDown:input.aimDown,jump:input.jump,fire:input.fire,grapple:input.grapple});
+
+    // Ropes update (constraint first, then player)
+    for(const r of [...ropes]) r.update();
+
+    // Players
+    for(const p of players){ if(p.hp>0) p.update(); }
+
+    // Bullets
+    bullets = bullets.filter(b=>b.life>0);
+    for(const b of bullets) b.update();
+
+    // Camera
+    if(me){ const target = Math.max(0, Math.min(me.x - W*0.45, COLS*CELL - W)); cameraX += (target - cameraX)*0.12; }
+
+    // HUD
+    timeEl.textContent = Math.ceil(timeLeft);
+    scoreEl.textContent = score;
+    pcountEl.textContent = players.length;
+    bcountEl.textContent = players.filter(p=>p.isBot).length;
+  }
+
+  function draw(){
+    ctx.clearRect(0,0,W,H);
+
+    // Map
+    const c0 = Math.max(0, ((cameraX/CELL)|0)-1);
+    const c1 = Math.min(COLS-1, (((cameraX+W)/CELL)|0)+1);
+    for(let x=c0; x<=c1; x++){
+      const px = x*CELL - cameraX;
+      for(let y=0;y<ROWS;y++){
+        if(terrain[y][x]){
+          ctx.fillStyle = '#334e6e';
+          ctx.fillRect(px, y*CELL, CELL, CELL);
         }
       }
     }
-  }
-  getCenter() { return {x:this.x+this.w/2, y:this.y+this.h/2}; }
-  update() {
-    // apply gravity
-    if(!this.rope) this.vy += 0.25;
-    // rope physics
-    if(this.rope) this.rope.update();
-    // move horizontally
-    this.x += this.vx;
-    if(isSolid(this.x, this.y) || isSolid(this.x, this.y+this.h)) {
-      this.x -= this.vx; this.vx=0;
-    }
-    // move vertically
-    this.y += this.vy;
-    if(isSolid(this.x, this.y+this.h) || isSolid(this.x+this.w, this.y+this.h)) {
-      // on ground
-      while(isSolid(this.x, this.y+this.h) || isSolid(this.x+this.w,this.y+this.h)) {
-        this.y -= 1;
-      }
-      this.vy=0; this.onGround=true;
-    } else {
-      this.onGround=false;
-    }
-    // boundaries
-    this.x = Math.max(0, Math.min(this.x, COLS*CELL - this.w));
-    this.y = Math.max(0, Math.min(this.y, ROWS*CELL - this.h));
-  }
-  draw() {
-    ctx.fillStyle = this.c;
-    ctx.fillRect(this.x, this.y, this.w, this.h);
-    // draw gun
-    const c = this.getCenter();
-    ctx.strokeStyle = this.c; ctx.lineWidth=2;
-    ctx.beginPath();
-    ctx.moveTo(c.x, c.y);
-    ctx.lineTo(c.x + Math.cos(this.aim)*15, c.y + Math.sin(this.aim)*15);
-    ctx.stroke();
-  }
-}
 
-// Bullet class
-class Bullet {
-  constructor(x,y,vx,vy,owner) {
-    this.x=x; this.y=y; this.vx=vx; this.vy=vy;
-    this.r=3; this.owner=owner; this.life=180;
-  }
-  update() {
-    this.vy += 0.15;
-    this.x += this.vx;
-    this.y += this.vy;
-    // collision with terrain
-    if(isSolid(this.x,this.y)) {
-      carve(this.x,this.y,8);
-      this.life=0; return;
-    }
-    // hit players
-    for(const p of players) {
-      if(p===this.owner) continue;
-      const dx=p.x+p.w/2-this.x, dy=p.y+p.h/2-this.y;
-      if(dx*dx + dy*dy < (p.w/2+this.r)*(p.w/2+this.r)) {
-        carve(this.x,this.y,12);
-        score += 1;
-        this.life=0; return;
-      }
-    }
-    this.life--;
-  }
-  draw() {
-    ctx.fillStyle='#ffdf77';
-    ctx.beginPath();
-    ctx.arc(this.x, this.y, this.r, 0, Math.PI*2);
-    ctx.fill();
-  }
-}
+    // Ropes
+    for(const r of ropes) r.draw();
 
-// Rope class
-class Rope {
-  constructor(player, anchor) {
-    this.player=player;
-    this.anchor=anchor;
-    this.rest = 120;
-  }
-  update() {
-    const c = this.player.getCenter();
-    const dx=this.anchor.x-c.x, dy=this.anchor.y-c.y;
-    const d = Math.sqrt(dx*dx+dy*dy);
-    if(d > this.rest) {
-      const stretch = d - this.rest;
-      const k=0.02;
-      const fx = (dx/d)*stretch*k;
-      const fy = (dy/d)*stretch*k;
-      this.player.vx += fx;
-      this.player.vy += fy;
-    }
-    // swing left/right controls
-    if(input.left) this.player.vx -= 0.05;
-    if(input.right) this.player.vx += 0.05;
-    // rope snaps if terrain destroyed
-    if(!isSolid(this.anchor.x,this.anchor.y)) {
-      this.detach();
-    }
-  }
-  detach() {
-    this.player.rope = null;
-    const idx = ropes.indexOf(this);
-    if(idx>=0) ropes.splice(idx,1);
-  }
-  draw() {
-    const c=this.player.getCenter();
-    ctx.strokeStyle='#86d7f2'; ctx.lineWidth=2;
-    ctx.beginPath();
-    ctx.moveTo(c.x, c.y);
-    ctx.lineTo(this.anchor.x, this.anchor.y);
-    ctx.stroke();
-  }
-}
+    // Bullets
+    for(const b of bullets) b.draw();
 
-// Terrain functions
-function generateTerrain() {
-  const grid = Array.from({length:ROWS}, ()=>Array(COLS).fill(0));
-  for(let y=0;y<ROWS;y++){
-    for(let x=0;x<COLS;x++){
-      const rand = y<ROWS*0.5 ? 0 : (Math.random()<0.5?1:0);
-      grid[y][x]=rand;
-    }
+    // Players
+    for(const p of players) p.draw();
   }
-  for(let i=0;i<3;i++){
-    const copy=grid.map(r=>r.slice());
-    for(let y=1;y<ROWS-1;y++){
-      for(let x=1;x<COLS-1;x++){
-        let sum=0;
-        for(let dy=-1;dy<=1;dy++){
-          for(let dx=-1;dx<=1;dx++){
-            sum += copy[y+dy][x+dx];
-          }
-        }
-        grid[y][x] = sum>=5?1:0;
-      }
-    }
-  }
-  for(let y=Math.floor(ROWS*0.8); y<ROWS; y++){
-    for(let x=0; x<COLS; x++) grid[y][x]=1;
-  }
-  return grid;
-}
-function isSolid(px,py) {
-  const cx = Math.floor(px/CELL), cy=Math.floor(py/CELL);
-  if(cx<0||cy<0||cx>=COLS||cy>=ROWS) return true;
-  return terrain[cy][cx]!==0;
-}
-function carve(x,y,r) {
-  const cx=Math.floor(x/CELL), cy=Math.floor(y/CELL), rr=Math.ceil(r/CELL);
-  for(let yy=cy-rr;yy<=cy+rr;yy++){
-    for(let xx=cx-rr;xx<=cx+rr;xx++){
-      if(xx>=0&&yy>=0&&xx<COLS&&yy<ROWS){
-        const dx=xx-cx, dy=yy-cy;
-        if(dx*dx+dy*dy <= (r/CELL)*(r/CELL)) terrain[yy][xx]=0;
-      }
-    }
-  }
-}
 
-// Input state
-const input = {left:false,right:false,up:false,down:false,jump:false,fire:false,grapple:false};
-window.addEventListener('keydown', e=>{
-  if(e.key==='ArrowLeft'||e.key==='a') input.left=true;
-  if(e.key==='ArrowRight'||e.key==='d') input.right=true;
-  if(e.key==='ArrowUp'||e.key==='w') input.up=true;
-  if(e.key==='ArrowDown'||e.key==='s') input.down=true;
-  if(e.key===' ') input.jump=true;
-  if(e.key==='f') input.fire=true;
-  if(e.key==='g') input.grapple=true;
-});
-window.addEventListener('keyup', e=>{
-  if(e.key==='ArrowLeft'||e.key==='a') input.left=false;
-  if(e.key==='ArrowRight'||e.key==='d') input.right=false;
-  if(e.key==='ArrowUp'||e.key==='w') input.up=false;
-  if(e.key==='ArrowDown'||e.key==='s') input.down=false;
-  if(e.key===' ') input.jump=false;
-  if(e.key==='f') input.fire=false;
-  if(e.key==='g') input.grapple=false;
-});
+  function loop(){ update(); draw(); requestAnimationFrame(loop); }
 
-// Mobile control bindings
-function bindTouch(id, key) {
-  const el=document.getElementById(id);
-  el.addEventListener('touchstart', e=>{e.preventDefault(); input[key]=true;}, {passive:false});
-  el.addEventListener('touchend', e=>{e.preventDefault(); input[key]=false;}, {passive:false});
-  el.addEventListener('mousedown', e=>{e.preventDefault(); input[key]=true;});
-  el.addEventListener('mouseup', e=>{e.preventDefault(); input[key]=false;});
-}
-bindTouch('btnLeft','left');
-bindTouch('btnRight','right');
-bindTouch('btnUp','up');
-bindTouch('btnDown','down');
-bindTouch('btnJump','jump');
-bindTouch('btnFire','fire');
-bindTouch('btnGrapple','grapple');
-
-document.getElementById('resetBtn').onclick = ()=>startGame();
-
-function startGame() {
-  terrain = generateTerrain();
-  players = [new Player(30, 200, '#e6c275')];
-  bullets = []; ropes=[]; timeLeft = 120; score=0; running=true;
-  document.getElementById('timeLabel').textContent = 'Time: ' + timeLeft;
-  document.getElementById('scoreLabel').textContent = 'Score: ' + score;
-}
-
-function update() {
-  if(!running) return;
-  timeLeft -= 1/60;
-  if(timeLeft <= 0) { running=false; }
-  players.forEach(p=>{ p.input(input); p.update(); });
-  bullets = bullets.filter(b=>b.life>0);
-  bullets.forEach(b=>b.update());
-  ropes.forEach(r=>r.update());
-  document.getElementById('timeLabel').textContent = 'Time: ' + Math.ceil(timeLeft);
-  document.getElementById('scoreLabel').textContent = 'Score: ' + score;
-}
-function render() {
-  ctx.clearRect(0,0,canvas.width,canvas.height);
-  // offset for following player
-  const hero = players[0];
-  const offsetX = Math.max(0, Math.min(hero.x - canvas.width/2, COLS*CELL - canvas.width));
-  // draw terrain
-  for(let y=0;y<ROWS;y++){
-    for(let x=0;x<COLS;x++){
-      if(terrain[y][x]) {
-        const px=x*CELL-offsetX;
-        const py=y*CELL;
-        ctx.fillStyle = terrain[y][x]==1? '#3a5370' : '#24435d';
-        ctx.fillRect(px,py,CELL,CELL);
-      }
-    }
-  }
-  bullets.forEach(b=>b.draw());
-  ropes.forEach(r=>r.draw());
-  players.forEach(p=>{ p.draw(); });
-}
-function gameLoop() {
-  update();
-  render();
-  requestAnimationFrame(gameLoop);
-}
-startGame();
-gameLoop();
+  start(); loop();
+})();
 </script>
 </body>
 </html>
