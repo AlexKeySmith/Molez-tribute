@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1,user-scalable=no" />
-<title>MoleZ • Visible Terrain + Debug + Blood + Grapple</title>
+<title>MoleZ • Full Build + Debug HUD</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;overflow:hidden}
@@ -18,7 +18,8 @@
   .btn{width:48px;height:48px;border-radius:8px;background:#15355c;border:1px solid #2c5588;color:#e6eaf5;display:flex;align-items:center;justify-content:center;font-weight:600;user-select:none;cursor:pointer}
   .btn:active{filter:brightness(1.2)}
   .act{width:72px;height:50px}
-  .dbg{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:6;background:#0008;border:1px solid #2b4e7c;border-radius:8px;padding:4px 8px;font-size:11px}
+  .dbg{position:absolute;top:8px;left:50%;transform:translateX(-50%);z-index:6;background:#0008;border:1px solid #2b4e7c;border-radius:8px;padding:4px 8px;font-size:11px;pointer-events:none}
+  .err{position:absolute;top:34px;left:50%;transform:translateX(-50%);z-index:6;background:#a00c;border:1px solid #f55;border-radius:8px;padding:4px 8px;font-size:11px;pointer-events:none}
 </style>
 </head>
 <body>
@@ -31,6 +32,7 @@
   </div>
 </div>
 <div class="dbg" id="dbg">FPS: — | ents: —</div>
+<div class="err" id="err">OK</div>
 
 <!-- Mobile controls -->
 <div class="controls">
@@ -51,13 +53,12 @@
   const cv = document.getElementById('cv');
   const ctx = cv.getContext('2d');
   const DPR = Math.min(2, window.devicePixelRatio||1);
-  let W=0,H=0;
+  let W=0,H=0, bgGrad=null;
   function resize(){
     W=innerWidth; H=innerHeight;
     cv.width = Math.floor(W*DPR); cv.height = Math.floor(H*DPR);
     cv.style.width=W+'px'; cv.style.height=H+'px';
     ctx.setTransform(DPR,0,0,DPR,0,0);
-    // build a background gradient to avoid "pure black" look
     bgGrad = ctx.createLinearGradient(0,0,0,H);
     bgGrad.addColorStop(0,'#0f1f39');
     bgGrad.addColorStop(1,'#081427');
@@ -72,13 +73,13 @@
   const pcountEl = document.getElementById('pcount');
   const bcountEl = document.getElementById('bcount');
   const dbgEl = document.getElementById('dbg');
+  const errEl = document.getElementById('err');
   document.getElementById('reset').onclick = () => start();
 
   // ---------- Map / Terrain ----------
   const CELL = 4, COLS = 360, ROWS = 160;
   let terrain;     // 0 = empty, 1 = solid
   let stains;      // Uint8 intensity per cell (0..255) for green blood
-  let bgGrad = null;
 
   function genTerrain(){
     const g = Array.from({length:ROWS},()=>new Uint8Array(COLS));
@@ -114,7 +115,7 @@
       for(let x=cx-rr;x<=cx+rr;x++){
         if(x<0||y<0||x>=COLS||y>=ROWS) continue;
         const dx=x-cx, dy=y-cy;
-        if(dx*dx+dy*dy <= rr2){ terrain[y][x]=0; stains[y][x]=0; }
+        if(dx*dx+dy*dy <= rr2){ terrain[y][x]=0; stains[y][x]=0; } // remove terrain + stains
       }
     }
   }
@@ -152,12 +153,14 @@
   class Player{
     constructor(x,y,color,isBot=false){
       this.x=x; this.y=y; this.vx=0; this.vy=0; this.w=12; this.h=12;
-      this.color=color; this.isBot=isBot; this.aim=0; this.face=1;
+      this.color=color; this.isBot=isBot; this.aim=0; this.face=1; // +1 right, -1 left
       this.onGround=false; this.jumpCd=0; this.fireCd=0; this.hookCd=0; this.rope=null;
       this.hp=100; this._grappleHeldPrev=false; this.step=0;
     }
     center(){ return {x:this.x+this.w/2,y:this.y+this.h/2}; }
+
     applyInput(inp){
+      // movement accel + facing; while roped, left/right adjust rope length
       const AX=0.4, MAX=2.1;
       if(inp.left){
         this.vx = Math.max(-MAX, this.vx - AX);
@@ -171,28 +174,35 @@
       }
       if(!inp.left && !inp.right && !this.rope) this.vx *= 0.86;
 
+      // aim
       const A_STEP=0.06;
       if(inp.aimUp)   this.aim -= A_STEP;
       if(inp.aimDown) this.aim += A_STEP;
       this.aim = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.aim));
 
+      // grapple: press to shoot if none; press again to detach
       if (inp.grapple && !this._grappleHeldPrev && this.hookCd<=0) {
         if(this.rope) this.rope.detach();
         else this.shootGrapple();
         this.hookCd=12;
       }
 
+      // jump (no detach)
       if(inp.jump && this.jumpCd<=0 && this.onGround){
         this.vy=-5.2; this.onGround=false; this.jumpCd=14;
       }
 
+      // fire
       if(inp.fire && this.fireCd<=0){ this.fire(); this.fireCd=12; }
 
       this._grappleHeldPrev=!!inp.grapple;
+
+      // cooldowns
       this.jumpCd=Math.max(0,this.jumpCd-1);
       this.fireCd=Math.max(0,this.fireCd-1);
       this.hookCd=Math.max(0,this.hookCd-1);
     }
+
     thinkBot(){
       if(!this.isBot || this.hp<=0) return;
       let target=null, best=1e9;
@@ -217,17 +227,19 @@
           this.aim=-Math.PI/2+(Math.random()*0.6-0.3);
           inp.grapple=true;
         } else if(this.rope){
-          if(Math.random()<0.006) inp.grapple=true;
+          if(Math.random()<0.006) inp.grapple=true; // sometimes detach
         }
       }
       this.applyInput(inp);
     }
+
     fire(){
       const c=this.center();
       const dx=Math.cos(this.aim)*this.face, dy=Math.sin(this.aim);
       const sp=3.2;
       bullets.push(new Bullet(c.x+dx*8,c.y+dy*8,dx*sp,dy*sp,this));
     }
+
     shootGrapple(){
       const c=this.center(), maxLen=260, step=4;
       const dirx=Math.cos(this.aim)*this.face, diry=Math.sin(this.aim);
@@ -239,10 +251,14 @@
           this.rope=r; ropes.push(r); return;
         }
       }
+      // no hit -> show failed-grapple animation
       fx.push(new GrappleFailFX(c.x,c.y,dirx,diry,maxLen));
     }
+
     update(){
+      // walk cycle accumulator
       if(this.onGround) this.step += Math.abs(this.vx)*0.3; else this.step *= 0.95;
+
       this.vy += GRAV;
       this.x += this.vx;
       if(hitSolidAABB(this.x,this.y,this.w,this.h)){ this.x -= this.vx; this.vx=0; }
@@ -254,34 +270,57 @@
       this.x = Math.max(0, Math.min(this.x, COLS*CELL - this.w));
       this.y = Math.max(0, Math.min(this.y, ROWS*CELL - this.h));
     }
+
     draw(){
       const cx = this.x - cameraX, cy = this.y;
-      // legs
-      ctx.lineWidth=2; ctx.strokeStyle=this.color;
+
+      // animated legs
+      ctx.lineWidth=2;
+      ctx.strokeStyle=this.color;
       const legLen = 6;
       if(this.onGround){
         const phase = this.step;
         const off1 = Math.sin(phase)*3;
         const off2 = Math.sin(phase+Math.PI)*3;
         ctx.beginPath();
-        ctx.moveTo(cx+3, cy+this.h); ctx.lineTo(cx+3+off1, cy+this.h+legLen); ctx.stroke();
+        ctx.moveTo(cx+3, cy+this.h);
+        ctx.lineTo(cx+3+off1, cy+this.h+legLen);
+        ctx.stroke();
         ctx.beginPath();
-        ctx.moveTo(cx+this.w-3, cy+this.h); ctx.lineTo(cx+this.w-3+off2, cy+this.h+legLen); ctx.stroke();
+        ctx.moveTo(cx+this.w-3, cy+this.h);
+        ctx.lineTo(cx+this.w-3+off2, cy+this.h+legLen);
+        ctx.stroke();
       } else {
+        // tucked legs in air
         ctx.beginPath();
-        ctx.moveTo(cx+3, cy+this.h); ctx.lineTo(cx+1, cy+this.h+4);
-        ctx.moveTo(cx+this.w-3, cy+this.h); ctx.lineTo(cx+this.w-1, cy+this.h+4);
+        ctx.moveTo(cx+3, cy+this.h);
+        ctx.lineTo(cx+1, cy+this.h+4);
+        ctx.moveTo(cx+this.w-3, cy+this.h);
+        ctx.lineTo(cx+this.w-1, cy+this.h+4);
         ctx.stroke();
       }
-      // body + head
+
+      // body bob
       const bob = this.onGround ? Math.sin(this.step*2)*1.2 : 0;
-      ctx.fillStyle=this.color; ctx.fillRect(cx, cy+1+bob, this.w, this.h-3);
-      ctx.fillStyle='#f6f7fb'; ctx.beginPath(); ctx.arc(cx+this.w/2, cy-2+bob, 4, 0, Math.PI*2); ctx.fill();
-      // gun
-      const c=this.center(); const dx=Math.cos(this.aim)*this.face, dy=Math.sin(this.aim);
+      // torso
+      ctx.fillStyle=this.color;
+      ctx.fillRect(cx, cy+1+bob, this.w, this.h-3);
+      // head
+      ctx.fillStyle='#f6f7fb';
+      ctx.beginPath();
+      ctx.arc(cx+this.w/2, cy-2+bob, 4, 0, Math.PI*2);
+      ctx.fill();
+
+      // gun (follows aim + facing)
+      const c=this.center();
+      const dx=Math.cos(this.aim)*this.face, dy=Math.sin(this.aim);
       ctx.strokeStyle=this.color; ctx.lineWidth=2;
-      ctx.beginPath(); ctx.moveTo(c.x-cameraX, c.y - 2 + bob); ctx.lineTo(c.x-cameraX + dx*16, c.y - 2 + bob + dy*16); ctx.stroke();
-      // HP
+      ctx.beginPath();
+      ctx.moveTo(c.x-cameraX, c.y - 2 + bob);
+      ctx.lineTo(c.x-cameraX + dx*16, c.y - 2 + bob + dy*16);
+      ctx.stroke();
+
+      // HP bar
       ctx.fillStyle='rgba(255,0,40,.55)'; ctx.fillRect(cx, cy-6, 20, 3);
       ctx.fillStyle='rgba(40,255,120,.9)'; ctx.fillRect(cx, cy-6, 20*(Math.max(0,this.hp)/100), 3);
     }
@@ -292,12 +331,17 @@
     update(){
       this.vy += 0.12;
       this.x += this.vx; this.y += this.vy;
+
+      // terrain hit
       if(isSolid(this.x,this.y)){ carve(this.x,this.y,10); this.life=0; return; }
+
+      // player hit
       for(const p of players){
         if(p===this.owner || p.hp<=0) continue;
         const dx=p.x+p.w/2 - this.x, dy=p.y+p.h/2 - this.y;
         if(dx*dx+dy*dy < (this.r+6)*(this.r+6)){
           p.hp=Math.max(0,p.hp-18);
+          // green blood splats: cast rays to closest terrain and stain it
           const c = {x:this.x, y:this.y};
           for(let i=0;i<8;i++){
             const ang = Math.atan2(this.vy,this.vx) + (Math.random()*0.9 - 0.45);
@@ -306,15 +350,20 @@
             if(hit.hit) addStainCircle(hit.x, hit.y, 5 + Math.random()*6, 220);
           }
           if(isSolid(this.x+this.vx*1.5, this.y+this.vy*1.5)) addStainCircle(this.x,this.y,6,220);
-          carve(this.x,this.y,12);
+
+          carve(this.x,this.y,12); // explosion clears stains within hole
           score++; this.life=0; break;
         }
       }
       this.life--;
     }
-    draw(){ ctx.fillStyle='#ffe27a'; ctx.beginPath(); ctx.arc(this.x-cameraX,this.y,this.r,0,Math.PI*2); ctx.fill(); }
+    draw(){
+      ctx.fillStyle='#ffe27a';
+      ctx.beginPath(); ctx.arc(this.x-cameraX,this.y,this.r,0,Math.PI*2); ctx.fill();
+    }
   }
 
+  // Rope constraint with swing pumping; left/right adjusts length while roped (handled in Player)
   class Rope{
     constructor(player, anchor, len){
       this.p=player; this.anchor={x:anchor.x,y:anchor.y};
@@ -324,19 +373,26 @@
     applyConstraint(){
       const ax=(this.anchor.x/CELL)|0, ay=(this.anchor.y/CELL)|0;
       if(ay<0||ay>=ROWS||ax<0||ax>=COLS || terrain[ay][ax]===0){ this.detach(); return; }
+
       const c=this.p.center();
       let dx=c.x - this.anchor.x, dy=c.y - this.anchor.y;
       let d=Math.hypot(dx,dy)||1;
       const nx = dx/d, ny = dy/d;
+
       if(d>this.len){
         const targetX = this.anchor.x + nx*this.len;
         const targetY = this.anchor.y + ny*this.len;
         const sx = targetX - c.x, sy = targetY - c.y;
         this.p.x += sx; this.p.y += sy;
+
         const vdot = this.p.vx*nx + this.p.vy*ny;
         if(vdot>0){ this.p.vx -= vdot*nx; this.p.vy -= vdot*ny; }
       }
+
+      // damping + gravity touch
       this.p.vx *= this.damp; this.p.vy = this.p.vy*this.damp + GRAV*0.16;
+
+      // swing pumping (tangent impulse)
       const tx=-ny, ty=nx;
       if(input.left)  { this.p.vx += tx*0.065; this.p.vy += ty*0.065; }
       if(input.right) { this.p.vx -= tx*0.065; this.p.vy -= ty*0.065; }
@@ -346,6 +402,7 @@
     draw(){ const c=this.p.center(); ctx.strokeStyle='#84d9ff'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(c.x-cameraX,c.y); ctx.lineTo(this.anchor.x-cameraX,this.anchor.y); ctx.stroke(); }
   }
 
+  // Failed-grapple FX (shows reach was too short)
   class GrappleFailFX{
     constructor(ox,oy,dx,dy,maxLen){ this.ox=ox; this.oy=oy; this.dx=dx; this.dy=dy; this.len=maxLen; this.age=0; this.ttl=22; }
     update(){ this.age++; }
@@ -395,6 +452,8 @@
     if(k==='f') input.fire=false;
     if(k==='g') input.grapple=false;
   });
+
+  // Touch bindings
   const bind = (id, key) => {
     const el=document.getElementById(id);
     const on = ()=> input[key]=true, off=()=> input[key]=false;
@@ -416,7 +475,7 @@
     return {x:Math.max(0,x-6), y:Math.max(0,y)};
   }
 
-  // ---------- Game loop ----------
+  // ---------- Game state & loop ----------
   function start(){
     terrain = genTerrain();
     players = [];
@@ -431,61 +490,36 @@
     }
   }
 
-  let lastFpsT=performance.now(), frames=0, fps=0;
+  let lastFpsT = performance.now(), frames = 0, fps = 0;
+
   function update(){
     if(!running) return;
     tick++;
     timeLeft -= 1/60; if(timeLeft<=0){ timeLeft=0; running=false; }
 
+    // AI
     for(const p of players){ if(p.isBot && p.hp>0) p.thinkBot(); }
+
+    // Human
     const me = players[0];
     if(me && me.hp>0){
-      me.applyInput({ left:input.left, right:input.right, aimUp:input.aimUp, aimDown:input.aimDown, jump:input.jump, fire:input.fire, grapple:input.grapple });
+      me.applyInput({
+        left:input.left, right:input.right,
+        aimUp:input.aimUp, aimDown:input.aimDown,
+        jump:input.jump, fire:input.fire, grapple:input.grapple
+      });
     }
+
+    // Ropes then entities
     for(const r of [...ropes]) r.update();
     for(const p of players){ if(p.hp>0) p.update(); }
     bullets = bullets.filter(b=>b.life>0); for(const b of bullets) b.update();
     fx = fx.filter(e=>e.alive()); for(const e of fx) e.update();
 
+    // Camera follow
     if(me){ const target = Math.max(0, Math.min(me.x - W*0.45, COLS*CELL - W)); cameraX += (target - cameraX)*0.12; }
 
+    // HUD data
     timeEl.textContent = Math.ceil(timeLeft);
     scoreEl.textContent = score;
-    pcountEl.textContent = players.length;
-    bcountEl.textContent = players.filter(p=>p.isBot).length;
-
-    // FPS
-    frames++; const now=performance.now();
-    if(now-lastFpsT>500){ fps = Math.round(frames*1000/(now-lastFpsT)); frames=0; lastFpsT=now; }
-    dbgEl.textContent = `FPS: ${fps} | ents: P${players.length} B${bullets.length} R${ropes.length} FX${fx.length}`;
-  }
-
-  function draw(){
-    // Background gradient (no more pure black)
-    ctx.fillStyle = bgGrad || '#0d1b34';
-    ctx.fillRect(0,0,W,H);
-
-    // World border (so map bounds are obvious)
-    const worldW = COLS*CELL - cameraX;
-    ctx.strokeStyle = '#5aa0ff';
-    ctx.lineWidth = 2;
-    ctx.strokeRect(-cameraX, 0, COLS*CELL, ROWS*CELL);
-
-    // Terrain (visible columns)
-    const c0 = Math.max(0, ((cameraX/CELL)|0)-1);
-    const c1 = Math.min(COLS-1, (((cameraX+W)/CELL)|0)+1);
-    for(let x=c0; x<=c1; x++){
-      const px = x*CELL - cameraX;
-      for(let y=0;y<ROWS;y++){
-        if(terrain[y][x]){
-          // brighter tile color with subtle variation
-          const shade = 70 + ((x*13 + y*7) % 50); // 70..119
-          ctx.fillStyle = `rgb(${shade}, ${shade+30}, ${shade+60})`; // bluish rock
-          ctx.fillRect(px, y*CELL, CELL, CELL);
-        }
-      }
-    }
-    // Stains overlay (green blood)
-    for(let x=c0; x<=c1; x++){
-      const px = x*CELL - cameraX;
-     
+    pcountEl.textContent = playe
