@@ -22,8 +22,9 @@
   .btn.grapple{background:linear-gradient(180deg,#9ef 0%,#08c 100%)}
   .btn.jump{background:linear-gradient(180deg,#9f9 0%,#0a4 100%)}
   .btn:active,.pad button:active{filter:brightness(1.15)}
-  #msg{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.7);padding:18px 24px;border-radius:12px;font-size:18px;display:none}
-  #hud{position:fixed;left:12px;top:10px;font:12px/1.2 monospace;color:#adf;background:rgba(0,0,0,.35);padding:6px 8px;border-radius:8px}
+  #msg{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.7);padding:18px 24px;border-radius:12px;font-size:18px;display:none;z-index:5}
+  #hud{position:fixed;left:12px;top:10px;font:12px/1.2 monospace;color:#adf;background:rgba(0,0,0,.35);padding:6px 8px;border-radius:8px;z-index:4}
+  #err{position:fixed;left:50%;bottom:10px;transform:translateX(-50%);max-width:90vw;background:#300;color:#f88;font:12px/1.3 monospace;padding:8px 10px;border-radius:8px;display:none;white-space:pre-wrap;z-index:6}
 </style>
 </head>
 <body>
@@ -45,12 +46,22 @@
 
 <div id="hud">HP: <span id="hpv">-</span> | Ammo: <span id="amv">-</span></div>
 <div id="msg">Tap to Start</div>
+<div id="err"></div>
 
 <script>
 (() => {
+  // --- error helper (shows runtime errors on screen) ---
+  const errBox = document.getElementById('err');
+  function showError(e){
+    errBox.textContent = (e && (e.stack || e.message || e)) + '';
+    errBox.style.display = 'block';
+    console.error(e);
+  }
+  window.addEventListener('error', ev => { showError(ev.error || ev.message); });
+
   // ===== Canvas & sizing =====
   const cvs = document.getElementById('game');
-  const ctx = cvs.getContext('2d');
+  const ctx = cvs.getContext('2d', {alpha:false});
   let W=0,H=0, DPR = Math.min(2, window.devicePixelRatio || 1);
   function resize(){
     W = Math.max(window.innerWidth, 640);
@@ -65,38 +76,35 @@
   resize();
 
   // ===== Map & terrain (cellular automata caves) =====
-  const B = 6;                               // block size (smaller pixels)
-  const COLS = 360;                          // map width in cells (wide)
-  const ROWS = 140;                          // map height in cells (tall)
+  const B = 6;                     // block size (small pixels)
+  const COLS = 360;                // map width in cells (wide)
+  const ROWS = 140;                // map height in cells (tall)
   const MAP_W = COLS * B, MAP_H = ROWS * B;
-  const WALL = 2;                            // indestructible wall
-  const SOLID = 1;                           // normal solid (destructible)
-  const AIR = 0;                             // empty
+  const WALL = 2;                  // indestructible
+  const SOLID = 1;                 // destructible
+  const AIR = 0;
 
   /** terrain[x][y] */
   let terrain = [];
 
   function genCaves() {
-    // init random
     terrain = Array.from({length:COLS}, ()=>Array(ROWS).fill(AIR));
+    // random fill with vertical density bias
     for (let x=0; x<COLS; x++){
       for (let y=0; y<ROWS; y++){
         const border = (x===0||y===0||x===COLS-1||y===ROWS-1);
         if (border){ terrain[x][y]=WALL; continue; }
-        // denser lower half; sparse upper to allow ceilings
         const base = y > ROWS*0.55 ? 0.62 : (y > ROWS*0.35 ? 0.45 : 0.35);
         terrain[x][y] = (Math.random() < base) ? SOLID : AIR;
       }
     }
-    // smooth (5 steps)
     for (let s=0; s<5; s++) smoothStep();
-    // carve some tunnels
     for (let i=0;i<220;i++){
-      let cx = Math.floor(Math.random()*COLS), cy = Math.floor(Math.random()*ROWS);
-      const r = 2 + Math.floor(Math.random()*4);
-      carveCircle(cx, cy, r);
+      carveCircle(2+Math.floor(Math.random()*(COLS-4)),
+                  2+Math.floor(Math.random()*(ROWS-4)),
+                  2 + Math.floor(Math.random()*4));
     }
-    // enforce borders indestructible
+    // enforce indestructible borders
     for (let x=0;x<COLS;x++){ terrain[x][0]=WALL; terrain[x][ROWS-1]=WALL; }
     for (let y=0;y<ROWS;y++){ terrain[0][y]=WALL; terrain[COLS-1][y]=WALL; }
   }
@@ -106,12 +114,8 @@
       for (let y=1; y<ROWS-1; y++){
         if (terrain[x][y]===WALL){ next[x][y]=WALL; continue; }
         let cnt=0;
-        for (let dx=-1;dx<=1;dx++){
-          for (let dy=-1;dy<=1;dy++){
-            if (terrain[x+dx][y+dy]!==AIR) cnt++;
-          }
-        }
-        // classic CA rule (more neighbors -> fill)
+        for (let dx=-1;dx<=1;dx++) for (let dy=-1;dy<=1;dy++)
+          if (terrain[x+dx][y+dy]!==AIR) cnt++;
         next[x][y] = (cnt >= 5) ? SOLID : AIR;
       }
     }
@@ -152,14 +156,11 @@
   function clampScroll(){
     scrollX = Math.max(0, Math.min(scrollX, MAP_W - W));
   }
-
-  // Edge look-ahead near boundaries so you see slightly ahead
   function targetScrollFor(player){
     const center = player.x - W/2;
-    const look = player.vx>=0 ? 120 : -120; // lookahead based on movement
+    const look = player.vx>=0 ? 120 : -120;
     let target = center + look;
-    target = Math.max(0, Math.min(target, MAP_W - W));
-    return target;
+    return Math.max(0, Math.min(target, MAP_W - W));
   }
 
   // ===== Entities =====
@@ -172,13 +173,12 @@
   const players = [];
   const bullets = [];
   const ropes = [];
-  const pickups = []; // {x,y,type:'health'|'ammo',vy,ttl,spin}
+  const pickups = [];
 
   // HUD
   const hpv = document.getElementById('hpv');
   const amv = document.getElementById('amv');
 
-  // Helpers
   function rnd(a,b){ return a + Math.random()*(b-a); }
   function spawnPick(type,x,y){
     pickups.push({
@@ -194,23 +194,18 @@
     constructor(id,x,y,color,isBot=false){
       this.id=id; this.x=x; this.y=y; this.vx=0; this.vy=0;
       this.w=12; this.h=18; this.color=color; this.isBot=isBot;
-      this.onGround=false; this.hp=MAX_HP; this.aim = -0.1; // radians
+      this.onGround=false; this.hp=MAX_HP; this.aim = -0.1;
       this.ammo = 60;
-      this.rope = null; // instance of Rope
+      this.rope = null;
       this.dead=false;
     }
-    rect(){ return {x:this.x, y:this.y, w:this.w, h:this.h}; }
     center(){ return {x:this.x+this.w/2, y:this.y+this.h/2}; }
     takeDamage(d){
       if(this.dead) return;
-      this.hp = Math.max(0, this.hp - d);
+      this.hp = Math.max(0, this.hp - Math.max(0,d|0));
       if (this.hp<=0){ this.dead=true; this.onGround=false; this.vx=this.vy=0; this.dropLoot(); if (this.rope) this.rope.detach(); }
     }
-    dropLoot(){
-      // Drop one health and one ammo pickup
-      spawnPick('health', this.x+this.w/2, this.y);
-      spawnPick('ammo',   this.x+this.w/2, this.y);
-    }
+    dropLoot(){ spawnPick('health', this.x+this.w/2, this.y); spawnPick('ammo', this.x+this.w/2, this.y); }
     fire(){
       if(this.dead || this.ammo<=0) return;
       const c = this.center();
@@ -224,65 +219,49 @@
       if(this.rope){ this.rope.detach(); this.rope=null; return; }
       const c = this.center();
       const dir = {x:Math.cos(this.aim), y:Math.sin(this.aim)};
-      this.rope = new Rope(this, c.x, c.y, dir);
-      ropes.push(this.rope);
+      const rope = new Rope(this, c.x, c.y, dir);
+      if (!rope.dead){ this.rope = rope; ropes.push(rope); }
     }
-    jump(){
-      if(this.dead) return;
-      if(this.onGround){ this.vy = -6.6; this.onGround=false; }
-    }
+    jump(){ if(!this.dead && this.onGround){ this.vy = -6.6; this.onGround=false; } }
     thinkBot(){
       if(!this.isBot || this.dead) return;
-      // Very simple bot: wander, sometimes jump, sometimes shoot, occasional grapple
       if (Math.random()<0.02) this.vx += (Math.random()<0.5?-1:1)*0.8;
       if (this.onGround && Math.random()<0.02) this.jump();
       if (Math.random()<0.02) this.aim += (Math.random()-0.5)*0.4;
       if (this.ammo>0 && Math.random()<0.03) this.fire();
       if (!this.rope && Math.random()<0.005) this.grappleToggle();
-      if (this.rope && Math.random()<0.006) this.grappleToggle(); // release
-      // clamp aim upwards mostly
-      this.aim = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.aim));
+      if (this.rope && Math.random()<0.006) this.grappleToggle();
+      this.aim = Math.max(-Math.PI/1.6, Math.min(Math.PI/1.6, this.aim));
     }
     update(){
       if(this.dead) return;
-      // gravity
       this.vy += GRAV;
-      // rope (applies forces)
       if(this.rope) this.rope.update();
 
       // integrate
       let nx = this.x + this.vx;
       let ny = this.y + this.vy;
 
-      // horizontal collision
-      if (collides(nx, this.y, this.w, this.h)){
-        // step by step resolve
+      // horizontal collision (guard infinite loops)
+      if (aabbCollides(nx, this.y, this.w, this.h)){
         const step = Math.sign(this.vx)||1;
-        while(!collides(this.x+Math.sign(this.vx), this.y, this.w, this.h)) this.x+=Math.sign(this.vx);
+        let guard=0;
+        while(!aabbCollides(this.x+Math.sign(this.vx), this.y, this.w, this.h) && guard++<64) this.x+=Math.sign(this.vx);
         this.vx = 0;
-      } else {
-        this.x = nx;
-      }
+      } else { this.x = nx; }
 
-      // vertical collision
-      if (collides(this.x, ny, this.w, this.h)){
-        if (this.vy>0){ // landing
-          while(!collides(this.x, this.y+1, this.w, this.h)) this.y++;
-          this.onGround=true;
-        }
-        if (this.vy<0){ // head bump
-          while(!collides(this.x, this.y-1, this.w, this.h)) this.y--;
-        }
+      // vertical collision (guard)
+      if (aabbCollides(this.x, ny, this.w, this.h)){
+        if (this.vy>0){ let guard=0; while(!aabbCollides(this.x, this.y+1, this.w, this.h) && guard++<64) this.y++; this.onGround=true; }
+        if (this.vy<0){ let guard=0; while(!aabbCollides(this.x, this.y-1, this.w, this.h) && guard++<64) this.y--; }
         this.vy = 0;
-      } else {
-        this.y = ny; this.onGround=false;
-      }
+      } else { this.y = ny; this.onGround=false; }
 
-      // friction & clamps
+      // friction/clamps
       this.vx *= FRICTION;
       if (Math.abs(this.vx)<0.01) this.vx=0;
 
-      // clamp inside map; borders are walls anyway
+      // clamp inside map
       this.x = Math.max(0, Math.min(this.x, MAP_W - this.w));
       this.y = Math.max(0, Math.min(this.y, MAP_H - this.h));
     }
@@ -293,27 +272,23 @@
       }else{
         ctx.fillStyle=this.color;
         ctx.fillRect(this.x - scrollX, this.y, this.w, this.h);
-        // gun direction line
+        // gun
         const c=this.center();
         ctx.strokeStyle='#fff'; ctx.lineWidth=1;
         ctx.beginPath();
         ctx.moveTo(c.x - scrollX, c.y);
         ctx.lineTo(c.x - scrollX + Math.cos(this.aim)*18, c.y + Math.sin(this.aim)*18);
         ctx.stroke();
-        // health bar
-        const hpw=30, hph=4;
+        // HP bar (never below 0)
+        const hpw=30, hph=4, ratio = Math.max(0,this.hp)/MAX_HP;
         ctx.fillStyle='rgba(255,0,0,.6)';
         ctx.fillRect(this.x - scrollX, this.y - 8, hpw, hph);
         ctx.fillStyle='rgba(0,255,80,.9)';
-        const ratio = Math.max(0,this.hp)/MAX_HP;
         ctx.fillRect(this.x - scrollX, this.y - 8, hpw*ratio, hph);
       }
-      // rope drawn separately by rope.draw()
     }
   }
-
-  function collides(x,y,w,h){
-    // AABB vs terrain
+  function aabbCollides(x,y,w,h){
     const x0 = Math.floor(x/B), y0 = Math.floor(y/B);
     const x1 = Math.floor((x+w-1)/B), y1 = Math.floor((y+h-1)/B);
     for (let cx=x0; cx<=x1; cx++){
@@ -332,13 +307,10 @@
     update(){
       if (this.dead) return;
       this.x += this.vx; this.y += this.vy; this.ttl--;
-      // collide terrain
       if (isSolid(this.x,this.y)){
         if (canDestroy(this.x,this.y)) destroyAt(this.x,this.y,1);
-        this.dead=true;
-        return;
+        this.dead=true; return;
       }
-      // hit players
       for (const p of players){
         if (p===this.owner || p.dead) continue;
         const dx = (p.x+p.w/2) - this.x, dy = (p.y+p.h/2) - this.y;
@@ -360,19 +332,16 @@
 
   class Rope{
     constructor(player, sx,sy, dir){
-      this.p=player;
-      this.hooked=false; this.anchor={x:sx,y:sy};
-      this.dir=dir; this.len=0; this.maxCast=MAP_W; // cast unlimited until hit
+      this.p=player; this.hooked=false; this.anchor={x:sx,y:sy};
+      this.dir=dir; this.dead=false;
       this.restLen = 120; // natural length
       this.k=0.015;       // elasticity
-      this.damp=0.98;     // damping
-      this.dead=false;
-      // cast forward until wall
-      for (let t=0; t<this.maxCast; t+=6){
+      this.damp=0.985;    // damping
+      // cast until hit
+      for (let t=0; t<MAP_W; t+=6){
         const tx = sx + dir.x*t, ty = sy + dir.y*t;
         if (isSolid(tx,ty)){
           this.anchor = {x:tx,y:ty};
-          this.len = Math.hypot(tx - this.p.x, ty - this.p.y);
           this.hooked=true; break;
         }
       }
@@ -384,7 +353,6 @@
       const c = this.p.center();
       let dx = this.anchor.x - c.x, dy = this.anchor.y - c.y;
       const dist = Math.hypot(dx,dy) || 0.0001;
-      // Elastic force when stretched
       const stretch = dist - this.restLen;
       if (stretch>0){
         const ax = (dx/dist)*stretch*this.k;
@@ -392,34 +360,30 @@
         this.p.vx += ax;
         this.p.vy += ay;
       }
-      // small tangential pump from player input (swing feel)
+      // swing pumping
       if (controls.left) this.p.vx -= 0.05;
       if (controls.right) this.p.vx += 0.05;
-      // damping
       this.p.vx *= this.damp; this.p.vy = (this.p.vy)*this.damp + GRAV*0.2;
 
-      // Whip destroy (midpoint hits hard)
+      // Whip destroy
       const speed = Math.hypot(this.p.vx,this.p.vy);
       if (speed>7){
         const mx = (this.anchor.x + c.x)/2, my = (this.anchor.y + c.y)/2;
         if (canDestroy(mx,my)) destroyAt(mx,my,2);
       }
-
-      // If anchor is in destructible terrain and becomes air, detach
+      // If anchor eroded and becomes air (not a WALL), detach
       const ax = Math.floor(this.anchor.x/B), ay = Math.floor(this.anchor.y/B);
       if (ax>0&&ay>0&&ax<COLS-1&&ay<ROWS-1 && terrain[ax][ay]===AIR) this.detach();
     }
     draw(){
       if (!this.hooked||this.dead) return;
-      // elastic rope with slight sag visual
       const c = this.p.center();
       ctx.strokeStyle='#9ef';
       ctx.lineWidth=2;
       ctx.beginPath();
       ctx.moveTo(c.x - scrollX, c.y);
-      // simple quadratic curve midpoint for elastic look
       const midx = (c.x + this.anchor.x)/2 - scrollX;
-      const midy = (c.y + this.anchor.y)/2 + 10; // sag
+      const midy = (c.y + this.anchor.y)/2 + 10;
       ctx.quadraticCurveTo(midx, midy, this.anchor.x - scrollX, this.anchor.y);
       ctx.stroke();
     }
@@ -433,13 +397,8 @@
       p.spin += 0.05;
       p.vy += 0.06;
       p.y += p.vy;
-      // float around base Y (simple sine hover)
       p.y = p.baseY + Math.sin(p.t*0.06)*6;
-
-      // collide with map floor (so they sit in caves)
       if (isSolid(p.x, p.y+6)) { p.baseY-=2; p.y-=2; }
-
-      // player collect
       for (const pl of players){
         if (pl.dead) continue;
         const dx = (pl.x+pl.w/2) - p.x, dy = (pl.y+pl.h/2) - p.y;
@@ -473,8 +432,7 @@
   }
 
   // ===== Spawning =====
-  function findSpawnXCol(colGuess){
-    // find air with solid just below for a valid ground tile
+  function findSpawn(colGuess){
     const cx = Math.max(1, Math.min(COLS-2, colGuess));
     for (let y=1;y<ROWS-2;y++){
       if (terrain[cx][y]===AIR && terrain[cx][y+1]!==AIR){
@@ -485,8 +443,7 @@
   }
 
   // ===== Input =====
-  const controls = { left:false, right:false, up:false, down:false, fire:false };
-  const dpad = document.getElementById('dpad');
+  const controls = { left:false, right:false, up:false, down:false };
   const btnL = document.getElementById('left');
   const btnR = document.getElementById('right');
   const btnU = document.getElementById('up');
@@ -513,35 +470,19 @@
   btnJump.addEventListener('touchstart', e=>{e.preventDefault(); me() && me().jump(); autoFollow=true;});
   btnJump.addEventListener('mousedown',  e=>{e.preventDefault(); me() && me().jump(); autoFollow=true;});
 
-  // Aim up/down via dpad up/down
   function applyAiming(p){
     if (!p || p.dead) return;
     if (controls.up)   p.aim -= 0.06;
-    if (controls.down){ 
-      if (p.rope) { p.rope.detach(); } // Down also releases rope
-      p.aim += 0.06;
-    }
-    // clamp mostly horizontal aiming, but allow up shots
+    if (controls.down){ p.aim += 0.06; if (p.rope) p.rope.detach(); } // down also releases rope
     p.aim = Math.max(-Math.PI*0.85, Math.min(Math.PI*0.85, p.aim));
   }
 
-  // Keyboard (desktop testing)
+  // Keyboard for testing
   window.addEventListener('keydown', e=>{
     if (e.repeat) return;
-    if (e.key==='ArrowLeft' || e.key==='a') controls.left=true;
+    if (e.key==='ArrowLeft'|| e.key==='a') controls.left=true;
     if (e.key==='ArrowRight'|| e.key==='d') controls.right=true;
     if (e.key==='ArrowUp'   || e.key==='w') controls.up=true;
     if (e.key==='ArrowDown' || e.key==='s') controls.down=true;
-    if (e.key===' ') { me() && me().fire(); }
-    if (e.key==='g') { me() && me().grappleToggle(); }
-    if (e.key==='j') { me() && me().jump(); }
-    autoFollow=true;
-  });
-  window.addEventListener('keyup', e=>{
-    if (e.key==='ArrowLeft' || e.key==='a') controls.left=false;
-    if (e.key==='ArrowRight'|| e.key==='d') controls.right=false;
-    if (e.key==='ArrowUp'   || e.key==='w') controls.up=false;
-    if (e.key==='ArrowDown' || e.key==='s') controls.down=false;
-  });
-
-  // Pan camera 
+    if (e.key===' ') {
+      
