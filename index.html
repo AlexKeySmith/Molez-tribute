@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1,user-scalable=no" />
-<title>MoleZ • Swinging Grapple + Reel + Bots</title>
+<title>MoleZ • Swinging Grapple + Aim + Facing + Bots</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;overflow:hidden}
@@ -18,6 +18,8 @@
   .btn{width:48px;height:48px;border-radius:8px;background:#15355c;border:1px solid #2c5588;color:#e6eaf5;display:flex;align-items:center;justify-content:center;font-weight:600;user-select:none;cursor:pointer}
   .btn:active{filter:brightness(1.2)}
   .act{width:72px;height:50px}
+  .reelRow{display:flex; gap:6px; justify-content:center}
+  .mini{width:56px;height:38px;font-size:12px}
 </style>
 </head>
 <body>
@@ -25,7 +27,9 @@
 
 <div class="hud">
   <div class="pill">Time: <span id="time">120</span> | Score: <span id="score">0</span></div>
-  <div class="pill">Players: <span id="pcount">0</span> | Bots: <span id="bcount">0</span> <button id="reset" class="pill" style="margin-left:8px;cursor:pointer;">Reset</button></div>
+  <div class="pill">Players: <span id="pcount">0</span> | Bots: <span id="bcount">0</span>
+    <button id="reset" class="pill" style="margin-left:8px;cursor:pointer;">Reset</button>
+  </div>
 </div>
 
 <!-- Mobile controls -->
@@ -38,6 +42,10 @@
     <button class="btn act" id="jump">Jump</button>
     <button class="btn act" id="fire">Fire</button>
     <button class="btn act" id="hook">Grapple</button>
+    <div class="reelRow">
+      <button class="btn mini" id="reelOut">– Reel</button>
+      <button class="btn mini" id="reelIn">Reel +</button>
+    </div>
   </div>
 </div>
 
@@ -116,32 +124,31 @@
   class Player{
     constructor(x,y,color,isBot=false){
       this.x=x; this.y=y; this.vx=0; this.vy=0; this.w=12; this.h=12;
-      this.color=color; this.isBot=isBot; this.aim=0; this.onGround=false;
-      this.jumpCd=0; this.fireCd=0; this.hookCd=0; this.rope=null;
+      this.color=color; this.isBot=isBot; this.aim=0; this.face=1; // +1 right, -1 left
+      this.onGround=false; this.jumpCd=0; this.fireCd=0; this.hookCd=0; this.rope=null;
       this.hp=100;
     }
     center(){ return {x:this.x+this.w/2,y:this.y+this.h/2}; }
 
     applyInput(inp){
-      // ---- Movement: acceleration (feels more responsive) ----
+      // movement accel + facing
       const AX = 0.4, MAX = 2.1;
-      if(inp.left)  this.vx = Math.max(-MAX, this.vx - AX);
-      if(inp.right) this.vx = Math.min( MAX, this.vx + AX);
+      if(inp.left)  { this.vx = Math.max(-MAX, this.vx - AX); this.face = -1; }
+      if(inp.right) { this.vx = Math.min( MAX, this.vx + AX); this.face =  1; }
       if(!inp.left && !inp.right) this.vx *= 0.86;
 
-      // ---- Aiming vs. Reeling ----
-      // If roped, Up/Down = reel in/out; else Up/Down = aim adjust.
+      // aim always (independent of rope)
       const A_STEP = 0.06;
+      if(inp.aimUp)   this.aim -= A_STEP;
+      if(inp.aimDown) this.aim += A_STEP;
+      this.aim = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.aim));
+
+      // rope reel (only when roped)
       if(this.rope){
-        if(inp.aimUp)   this.rope.len = Math.max(this.rope.minLen, this.rope.len - this.rope.reelRate);
-        if(inp.aimDown) this.rope.len = Math.min(this.rope.maxLen, this.rope.len + this.rope.reelRate);
-      }else{
-        if(inp.aimUp)   this.aim -= A_STEP;
-        if(inp.aimDown) this.aim += A_STEP;
-        this.aim = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.aim));
+        if(inp.reelIn)  this.rope.len = Math.max(this.rope.minLen, this.rope.len - this.rope.reelRate);
+        if(inp.reelOut) this.rope.len = Math.min(this.rope.maxLen, this.rope.len + this.rope.reelRate);
       }
 
-      // Jump / Fire / Grapple
       if(inp.jump && this.onGround && this.jumpCd<=0){ this.vy=-5.2; this.onGround=false; this.jumpCd=14; }
       if(inp.fire && this.fireCd<=0){ this.fire(); this.fireCd=12; }
       if(inp.grapple && this.hookCd<=0){ this.toggleGrapple(); this.hookCd=14; }
@@ -154,8 +161,8 @@
       if(!this.isBot || this.hp<=0) return;
       let target=null, best=1e9;
       for(const p of players){ if(p===this||p.hp<=0) continue; const dx=p.x-this.x, dy=p.y-this.y, d=dx*dx+dy*dy; if(d<best){best=d; target=p;} }
-      const inp = {left:false,right:false,aimUp:false,aimDown:false,jump:false,fire:false,grapple:false};
-      // choose drift direction occasionally
+      const inp = {left:false,right:false,aimUp:false,aimDown:false,jump:false,fire:false,grapple:false,reelIn:false,reelOut:false};
+      // wander
       if(Math.random()<0.02) this._dir = (Math.random()<0.5?-1:1);
       if(this._dir<0) inp.left=true; else inp.right=true;
       if(this.onGround && Math.random()<0.02) inp.jump=true;
@@ -163,28 +170,35 @@
       if(target){
         const c=this.center(), tc=target.center();
         const ang = Math.atan2(tc.y - c.y, tc.x - c.x);
-        if(!this.rope){ // only tilt when not roped
-          if(ang < this.aim-0.05) inp.aimUp=true;
-          if(ang > this.aim+0.05) inp.aimDown=true;
-        }else{
-          // while roped: occasionally reel to keep motion
-          if(Math.random()<0.05) inp.aimUp=true;
-        }
+        if(ang < this.aim-0.05) inp.aimUp=true;
+        if(ang > this.aim+0.05) inp.aimDown=true;
+
         if(Math.random()<0.06) inp.fire=true;
-        if(!this.rope && Math.random()<0.012){ this.aim = -Math.PI/2 + (Math.random()*0.6 - 0.3); inp.grapple=true; }
-        if(this.rope && Math.random()<0.006) inp.grapple=true;
+
+        if(!this.rope && Math.random()<0.012){
+          this.face = (Math.cos(this.aim)>=0) ? 1 : -1;
+          this.aim = -Math.PI/2 + (Math.random()*0.6 - 0.3);
+          inp.grapple=true;
+        }
+        if(this.rope){
+          if(Math.random()<0.04) inp.reelIn=true;
+          if(Math.random()<0.02) inp.reelOut=true;
+          if(Math.random()<0.006) inp.grapple=true; // detach
+        }
       }
       this.applyInput(inp);
     }
 
     fire(){
       const c=this.center();
+      const dx = Math.cos(this.aim) * this.face;
+      const dy = Math.sin(this.aim);
       const speed=3.2;
       bullets.push(new Bullet(
-        c.x + Math.cos(this.aim)*8,
-        c.y + Math.sin(this.aim)*8,
-        Math.cos(this.aim)*speed,
-        Math.sin(this.aim)*speed,
+        c.x + dx*8,
+        c.y + dy*8,
+        dx*speed,
+        dy*speed,
         this
       ));
     }
@@ -192,8 +206,10 @@
     toggleGrapple(){
       if(this.rope){ this.rope.detach(); return; }
       const c=this.center(), maxLen=260, step=4;
+      const dirx = Math.cos(this.aim) * this.face;
+      const diry = Math.sin(this.aim);
       for(let t=8;t<maxLen;t+=step){
-        const tx=c.x+Math.cos(this.aim)*t, ty=c.y+Math.sin(this.aim)*t;
+        const tx=c.x+dirx*t, ty=c.y+diry*t;
         if(isSolid(tx,ty)){
           const len = Math.max(80, Math.min(t, 200));
           const r=new Rope(this,{x:tx,y:ty},len);
@@ -203,22 +219,14 @@
     }
 
     update(){
-      // gravity (rope constraint will adjust afterward)
       this.vy += GRAV;
-
-      // integrate & collide
       this.x += this.vx;
       if(hitSolidAABB(this.x,this.y,this.w,this.h)){ this.x -= this.vx; this.vx=0; }
       this.y += this.vy;
       if(hitSolidAABB(this.x,this.y,this.w,this.h)){
-        if(this.vy>0){
-          while(hitSolidAABB(this.x,this.y,this.w,this.h)) this.y -= 1;
-          this.onGround=true;
-        }
+        if(this.vy>0){ while(hitSolidAABB(this.x,this.y,this.w,this.h)) this.y -= 1; this.onGround=true; }
         this.vy=0;
       } else this.onGround=false;
-
-      // map bounds
       this.x = Math.max(0, Math.min(this.x, COLS*CELL - this.w));
       this.y = Math.max(0, Math.min(this.y, ROWS*CELL - this.h));
     }
@@ -227,10 +235,12 @@
       ctx.fillStyle=this.color;
       ctx.fillRect(this.x-cameraX,this.y,this.w,this.h);
       const c=this.center();
+      const dx = Math.cos(this.aim) * this.face;
+      const dy = Math.sin(this.aim);
       ctx.strokeStyle=this.color; ctx.lineWidth=2;
       ctx.beginPath();
       ctx.moveTo(c.x-cameraX,c.y);
-      ctx.lineTo(c.x-cameraX + Math.cos(this.aim)*16, c.y + Math.sin(this.aim)*16);
+      ctx.lineTo(c.x-cameraX + dx*16, c.y + dy*16);
       ctx.stroke();
       // HP
       ctx.fillStyle='rgba(255,0,40,.55)'; ctx.fillRect(this.x-cameraX, this.y-6, 20, 3);
@@ -251,24 +261,17 @@
       }
       this.life--;
     }
-    draw(){
-      ctx.fillStyle='#ffe27a'; ctx.beginPath(); ctx.arc(this.x-cameraX,this.y,this.r,0,Math.PI*2); ctx.fill();
-    }
+    draw(){ ctx.fillStyle='#ffe27a'; ctx.beginPath(); ctx.arc(this.x-cameraX,this.y,this.r,0,Math.PI*2); ctx.fill(); }
   }
 
-  // Constraint rope with reel in/out and swing pumping
+  // Constraint rope with reel in/out + swing pumping
   class Rope{
     constructor(player, anchor, len){
       this.p=player; this.anchor={x:anchor.x,y:anchor.y};
       this.len=len; this.minLen=60; this.maxLen=220; this.reelRate=2.2;
       this.damp=0.995;
     }
-    update(){
-      // nothing here; constraint applied post player integration in applyConstraint
-      this.applyConstraint();
-    }
     applyConstraint(){
-      // anchor might be destroyed
       const ax=(this.anchor.x/CELL)|0, ay=(this.anchor.y/CELL)|0;
       if(ay<0||ay>=ROWS||ax<0||ax>=COLS || terrain[ay][ax]===0){ this.detach(); return; }
 
@@ -277,7 +280,6 @@
       let d=Math.hypot(dx,dy)||1;
       const nx = dx/d, ny = dy/d;
 
-      // If stretched beyond len, project onto circle and remove outward velocity
       if(d>this.len){
         const targetX = this.anchor.x + nx*this.len;
         const targetY = this.anchor.y + ny*this.len;
@@ -288,32 +290,27 @@
         if(vdot>0){ this.p.vx -= vdot*nx; this.p.vy -= vdot*ny; }
       }
 
-      // damping + gravity tweak for smoother swing
+      // damping + gravity
       this.p.vx *= this.damp; this.p.vy = this.p.vy*this.damp + GRAV*0.16;
 
-      // tangential pump with left/right
+      // pump swing using left/right
       const tx=-ny, ty=nx;
       if(input.left)  { this.p.vx += tx*0.065; this.p.vy += ty*0.065; }
       if(input.right) { this.p.vx -= tx*0.065; this.p.vy -= ty*0.065; }
     }
-    detach(){
-      if(this.p.rope===this) this.p.rope=null;
-      const i=ropes.indexOf(this); if(i>=0) ropes.splice(i,1);
-    }
-    draw(){
-      const c=this.p.center();
-      ctx.strokeStyle='#84d9ff'; ctx.lineWidth=2;
-      ctx.beginPath();
-      ctx.moveTo(c.x-cameraX,c.y);
-      ctx.lineTo(this.anchor.x-cameraX,this.anchor.y);
-      ctx.stroke();
-    }
+    update(){ this.applyConstraint(); }
+    detach(){ if(this.p.rope===this) this.p.rope=null; const i=ropes.indexOf(this); if(i>=0) ropes.splice(i,1); }
+    draw(){ const c=this.p.center(); ctx.strokeStyle='#84d9ff'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(c.x-cameraX,c.y); ctx.lineTo(this.anchor.x-cameraX,this.anchor.y); ctx.stroke(); }
   }
 
   // ---------- Input ----------
-  const input = {left:false,right:false,aimUp:false,aimDown:false,jump:false,fire:false,grapple:false};
+  const input = {left:false,right:false,aimUp:false,aimDown:false,jump:false,fire:false,grapple:false,reelIn:false,reelOut:false};
+
   addEventListener('keydown',e=>{
     const k=e.key.toLowerCase();
+    // prevent browser scrolling on arrows/space
+    if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
+
     if(k==='arrowleft'||k==='a') input.left=true;
     if(k==='arrowright'||k==='d') input.right=true;
     if(k==='arrowup'||k==='w') input.aimUp=true;
@@ -321,7 +318,12 @@
     if(k===' ') input.jump=true;
     if(k==='f') input.fire=true;
     if(k==='g') input.grapple=true;
-  });
+
+    // reeling keys
+    if(k==='q') input.reelOut=true;
+    if(k==='e') input.reelIn=true;
+  }, {passive:false});
+
   addEventListener('keyup',e=>{
     const k=e.key.toLowerCase();
     if(k==='arrowleft'||k==='a') input.left=false;
@@ -331,27 +333,31 @@
     if(k===' ') input.jump=false;
     if(k==='f') input.fire=false;
     if(k==='g') input.grapple=false;
+
+    if(k==='q') input.reelOut=false;
+    if(k==='e') input.reelIn=false;
   });
 
   // Touch bindings
   const bind = (id, key) => {
     const el=document.getElementById(id);
     const on = ()=> input[key]=true, off=()=> input[key]=false;
+    if(!el) return;
     ['touchstart','mousedown'].forEach(ev=>el.addEventListener(ev,e=>{e.preventDefault();on();},{passive:false}));
     ['touchend','mouseup','mouseleave'].forEach(ev=>el.addEventListener(ev,e=>{e.preventDefault();off();},{passive:false}));
   };
   bind('l','left'); bind('r','right'); bind('u','aimUp'); bind('d','aimDown');
   bind('jump','jump'); bind('fire','fire'); bind('hook','grapple');
+  bind('reelIn','reelIn'); bind('reelOut','reelOut');
 
   // ---------- Spawning helpers ----------
   function safeSpawn(xGuess){
-    // find ground column near guess, then carve a small cavity so you can move
     const x = Math.max(10, Math.min(COLS*CELL-10, xGuess));
     let y = 40;
     for(let yy=0; yy<ROWS*CELL-30; yy++){
       if(isSolid(x, yy+18)){ y=yy-18; break; }
     }
-    carve(x, y+6, 14); // carve bubble to avoid wedging
+    carve(x, y+6, 14); // carve a bubble to avoid wedging
     return {x:Math.max(0,x-6), y:Math.max(0,y)};
   }
 
@@ -375,7 +381,7 @@
     if(!running) return;
     timeLeft -= 1/60; if(timeLeft<=0){ timeLeft=0; running=false; }
 
-    // AI first (so they set input)
+    // AI first
     for(const p of players){ if(p.isBot && p.hp>0) p.thinkBot(); }
 
     // Human input
@@ -384,19 +390,19 @@
       me.applyInput({
         left:input.left, right:input.right,
         aimUp:input.aimUp, aimDown:input.aimDown,
+        reelIn:input.reelIn, reelOut:input.reelOut,
         jump:input.jump, fire:input.fire, grapple:input.grapple
       });
     }
 
-    // Update ropes (constraint per-frame)
+    // Ropes
     for(const r of [...ropes]) r.update();
 
-    // Update players and bullets
+    // Players & bullets
     for(const p of players){ if(p.hp>0) p.update(); }
-    bullets = bullets.filter(b=>b.life>0);
-    for(const b of bullets) b.update();
+    bullets = bullets.filter(b=>b.life>0); for(const b of bullets) b.update();
 
-    // Camera follow
+    // Camera
     if(me){ const target = Math.max(0, Math.min(me.x - W*0.45, COLS*CELL - W)); cameraX += (target - cameraX)*0.12; }
 
     // HUD
@@ -408,7 +414,7 @@
 
   function draw(){
     ctx.clearRect(0,0,W,H);
-    // Terrain (only visible columns)
+    // Terrain visible columns
     const c0 = Math.max(0, ((cameraX/CELL)|0)-1);
     const c1 = Math.min(COLS-1, (((cameraX+W)/CELL)|0)+1);
     for(let x=c0; x<=c1; x++){
@@ -417,7 +423,6 @@
         if(terrain[y][x]){ ctx.fillStyle = '#334e6e'; ctx.fillRect(px, y*CELL, CELL, CELL); }
       }
     }
-    // Ropes, bullets, players
     for(const r of ropes) r.draw();
     for(const b of bullets) b.draw();
     for(const p of players) p.draw();
