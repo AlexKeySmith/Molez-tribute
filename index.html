@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1,user-scalable=no" />
-<title>MoleZ • Toggle Grapple + Rope Length on Left/Right + Bots</title>
+<title>MoleZ • Animations + Green Blood (Persistent)</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;overflow:hidden}
@@ -67,7 +67,8 @@
 
   // ---------- Map / Terrain ----------
   const CELL = 4, COLS = 360, ROWS = 160;
-  let terrain;
+  let terrain;     // 0 = empty, 1 = solid
+  let stains;      // Uint8 intensity per cell (0..255) for green blood
   function genTerrain(){
     const g = Array.from({length:ROWS},()=>new Uint8Array(COLS));
     for(let y=0;y<ROWS;y++){
@@ -87,6 +88,7 @@
       for(let y=1;y<ROWS-1;y++) for(let x=1;x<COLS-1;x++) g[y][x]=n[y][x];
     }
     for(let y=Math.floor(ROWS*0.82);y<ROWS;y++) for(let x=0;x<COLS;x++) g[y][x]=1;
+    stains = Array.from({length:ROWS},()=>new Uint8ClampedArray(COLS)); // start clean
     return g;
   }
   function isSolid(px,py){
@@ -96,13 +98,37 @@
   }
   function carve(px,py,rad){
     const cx=(px/CELL)|0, cy=(py/CELL)|0, rr=Math.ceil(rad/CELL);
+    const rr2=(rad/CELL)*(rad/CELL);
     for(let y=cy-rr;y<=cy+rr;y++){
       for(let x=cx-rr;x<=cx+rr;x++){
         if(x<0||y<0||x>=COLS||y>=ROWS) continue;
         const dx=x-cx, dy=y-cy;
-        if(dx*dx+dy*dy <= (rad/CELL)*(rad/CELL)) terrain[y][x]=0;
+        if(dx*dx+dy*dy <= rr2){ terrain[y][x]=0; stains[y][x]=0; } // remove terrain + any stain on it
       }
     }
+  }
+  function addStainCircle(px,py,rad,amount=200){
+    const cx=(px/CELL)|0, cy=(py/CELL)|0, rr=Math.ceil(rad/CELL), rr2=(rad/CELL)*(rad/CELL);
+    for(let y=cy-rr;y<=cy+rr;y++){
+      for(let x=cx-rr;x<=cx+rr;x++){
+        if(x<0||y<0||x>=COLS||y>=ROWS) continue;
+        const dx=x-cx, dy=y-cy;
+        if(dx*dx+dy*dy <= rr2 && terrain[y][x]){ // only sticks to terrain
+          stains[y][x] = Math.min(255, stains[y][x]+amount);
+        }
+      }
+    }
+  }
+  // Raycast to find first solid cell; return point just before impact
+  function rayToSurface(ox,oy,dx,dy,maxLen,step=2){
+    for(let t=0;t<=maxLen;t+=step){
+      const x=ox+dx*t, y=oy+dy*t;
+      if(isSolid(x,y)){
+        // step back slightly to splat on front
+        return {x:ox+dx*(t-2), y:oy+dy*(t-2), hit:true};
+      }
+    }
+    return {x:ox+dx*maxLen, y:oy+dy*maxLen, hit:false};
   }
 
   // ---------- Entities ----------
@@ -110,6 +136,7 @@
   let players=[], bullets=[], ropes=[], fx=[];
   let timeLeft=120, score=0, running=true;
   let cameraX=0;
+  let tick=0;
 
   function hitSolidAABB(x,y,w,h){
     return isSolid(x,y) || isSolid(x+w,y) || isSolid(x,y+h) || isSolid(x+w,y+h);
@@ -121,38 +148,39 @@
       this.color=color; this.isBot=isBot; this.aim=0; this.face=1; // +1 right, -1 left
       this.onGround=false; this.jumpCd=0; this.fireCd=0; this.hookCd=0; this.rope=null;
       this.hp=100; this._grappleHeldPrev=false;
+      this.step=0; // walk cycle accumulator
     }
     center(){ return {x:this.x+this.w/2,y:this.y+this.h/2}; }
 
     applyInput(inp){
-      // movement accel + facing
+      // movement accel + facing; while roped, left/right also adjust length
       const AX=0.4, MAX=2.1;
-      if(inp.left)  {
+      if(inp.left){
         this.vx = Math.max(-MAX, this.vx - AX);
         this.face=-1;
         if(this.rope) this.rope.len = Math.max(this.rope.minLen, this.rope.len - this.rope.reelRate);
       }
-      if(inp.right) {
+      if(inp.right){
         this.vx = Math.min( MAX, this.vx + AX);
         this.face= 1;
         if(this.rope) this.rope.len = Math.min(this.rope.maxLen, this.rope.len + this.rope.reelRate);
       }
       if(!inp.left && !inp.right && !this.rope) this.vx *= 0.86;
 
-      // aiming
+      // aim
       const A_STEP=0.06;
       if(inp.aimUp)   this.aim -= A_STEP;
       if(inp.aimDown) this.aim += A_STEP;
       this.aim = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.aim));
 
-      // grapple: press to shoot if none, press again to detach
+      // grapple: press to shoot if none; press again to detach
       if (inp.grapple && !this._grappleHeldPrev && this.hookCd<=0) {
         if(this.rope) this.rope.detach();
         else this.shootGrapple();
         this.hookCd=12;
       }
 
-      // jump always just jumps (doesn't detach)
+      // jump (no detach)
       if(inp.jump && this.jumpCd<=0 && this.onGround){
         this.vy=-5.2; this.onGround=false; this.jumpCd=14;
       }
@@ -161,6 +189,8 @@
       if(inp.fire && this.fireCd<=0){ this.fire(); this.fireCd=12; }
 
       this._grappleHeldPrev=!!inp.grapple;
+
+      // cooldowns
       this.jumpCd=Math.max(0,this.jumpCd-1);
       this.fireCd=Math.max(0,this.fireCd-1);
       this.hookCd=Math.max(0,this.hookCd-1);
@@ -170,10 +200,10 @@
       if(!this.isBot || this.hp<=0) return;
       let target=null, best=1e9;
       for(const p of players){ if(p===this||p.hp<=0) continue;
-        const dx=p.x-this.x, dy=p.y-this.y, d=dx*dx+dy*dy; if(d<best){best=d; target=p;}
+        const dx=p.x-this.x, dy=p.y-this.y, d=dx*dx+dy*dy;
+        if(d<best){best=d; target=p;}
       }
       const inp = {left:false,right:false,aimUp:false,aimDown:false,jump:false,fire:false,grapple:false};
-      // wander
       if(Math.random()<0.02) this._dir=(Math.random()<0.5?-1:1);
       if(this._dir<0) inp.left=true; else inp.right=true;
       if(this.onGround && Math.random()<0.02) inp.jump=true;
@@ -188,10 +218,9 @@
         if(!this.rope && Math.random()<0.012){
           this.face=(Math.cos(this.aim)>=0)?1:-1;
           this.aim=-Math.PI/2+(Math.random()*0.6-0.3);
-          inp.grapple=true; // rising edge shoots
+          inp.grapple=true;
         } else if(this.rope){
-          // sometimes detach
-          if(Math.random()<0.006) inp.grapple=true;
+          if(Math.random()<0.006) inp.grapple=true; // occasionally detach
         }
       }
       this.applyInput(inp);
@@ -220,6 +249,9 @@
     }
 
     update(){
+      // walk cycle accumulator
+      if(this.onGround) this.step += Math.abs(this.vx)*0.3; else this.step *= 0.95;
+
       this.vy += GRAV;
       this.x += this.vx;
       if(hitSolidAABB(this.x,this.y,this.w,this.h)){ this.x -= this.vx; this.vx=0; }
@@ -233,18 +265,59 @@
     }
 
     draw(){
+      const cx = this.x - cameraX, cy = this.y;
+
+      // animated legs
+      ctx.lineWidth=2;
+      ctx.strokeStyle=this.color;
+      const legLen = 6;
+      if(this.onGround){
+        const phase = this.step;
+        const off1 = Math.sin(phase)*3;
+        const off2 = Math.sin(phase+Math.PI)*3;
+        // back leg
+        ctx.beginPath();
+        ctx.moveTo(cx+3, cy+this.h);
+        ctx.lineTo(cx+3+off1, cy+this.h+legLen);
+        ctx.stroke();
+        // front leg
+        ctx.beginPath();
+        ctx.moveTo(cx+this.w-3, cy+this.h);
+        ctx.lineTo(cx+this.w-3+off2, cy+this.h+legLen);
+        ctx.stroke();
+      } else {
+        // tucked legs in air
+        ctx.beginPath();
+        ctx.moveTo(cx+3, cy+this.h);
+        ctx.lineTo(cx+1, cy+this.h+4);
+        ctx.moveTo(cx+this.w-3, cy+this.h);
+        ctx.lineTo(cx+this.w-1, cy+this.h+4);
+        ctx.stroke();
+      }
+
+      // body bob
+      const bob = this.onGround ? Math.sin(this.step*2)*1.2 : 0;
+      // torso
       ctx.fillStyle=this.color;
-      ctx.fillRect(this.x-cameraX,this.y,this.w,this.h);
+      ctx.fillRect(cx, cy+1+bob, this.w, this.h-3);
+      // head
+      ctx.fillStyle='#f6f7fb';
+      ctx.beginPath();
+      ctx.arc(cx+this.w/2, cy-2+bob, 4, 0, Math.PI*2);
+      ctx.fill();
+
+      // gun (follows aim + facing)
       const c=this.center();
       const dx=Math.cos(this.aim)*this.face, dy=Math.sin(this.aim);
       ctx.strokeStyle=this.color; ctx.lineWidth=2;
       ctx.beginPath();
-      ctx.moveTo(c.x-cameraX,c.y);
-      ctx.lineTo(c.x-cameraX + dx*16, c.y + dy*16);
+      ctx.moveTo(c.x-cameraX, c.y - 2 + bob);
+      ctx.lineTo(c.x-cameraX + dx*16, c.y - 2 + bob + dy*16);
       ctx.stroke();
-      // HP
-      ctx.fillStyle='rgba(255,0,40,.55)'; ctx.fillRect(this.x-cameraX, this.y-6, 20, 3);
-      ctx.fillStyle='rgba(40,255,120,.9)'; ctx.fillRect(this.x-cameraX, this.y-6, 20*(Math.max(0,this.hp)/100), 3);
+
+      // HP bar
+      ctx.fillStyle='rgba(255,0,40,.55)'; ctx.fillRect(cx, cy-6, 20, 3);
+      ctx.fillStyle='rgba(40,255,120,.9)'; ctx.fillRect(cx, cy-6, 20*(Math.max(0,this.hp)/100), 3);
     }
   }
 
@@ -253,15 +326,39 @@
     update(){
       this.vy += 0.12;
       this.x += this.vx; this.y += this.vy;
+
+      // terrain hit
       if(isSolid(this.x,this.y)){ carve(this.x,this.y,10); this.life=0; return; }
+
+      // player hit
       for(const p of players){
         if(p===this.owner || p.hp<=0) continue;
         const dx=p.x+p.w/2 - this.x, dy=p.y+p.h/2 - this.y;
-        if(dx*dx+dy*dy < (this.r+6)*(this.r+6)){ p.hp=Math.max(0,p.hp-18); carve(this.x,this.y,12); this.life=0; score++; break; }
+        if(dx*dx+dy*dy < (this.r+6)*(this.r+6)){
+          p.hp=Math.max(0,p.hp-18);
+          // green blood: throw several splats along rays and stick to terrain
+          const c = {x:this.x, y:this.y};
+          for(let i=0;i<8;i++){
+            const ang = Math.atan2(this.vy,this.vx) + (Math.random()*0.9 - 0.45);
+            const dirx = Math.cos(ang), diry = Math.sin(ang);
+            const hit = rayToSurface(c.x,c.y,dirx,diry,40,2);
+            if(hit.hit){
+              addStainCircle(hit.x, hit.y, 5 + Math.random()*6, 220);
+            }
+          }
+          // also a local splat at impact point (if terrain under)
+          if(isSolid(this.x+this.vx*1.5, this.y+this.vy*1.5)) addStainCircle(this.x,this.y,6,220);
+
+          carve(this.x,this.y,12); // explosion also carves terrain (clears stains in that hole)
+          score++; this.life=0; break;
+        }
       }
       this.life--;
     }
-    draw(){ ctx.fillStyle='#ffe27a'; ctx.beginPath(); ctx.arc(this.x-cameraX,this.y,this.r,0,Math.PI*2); ctx.fill(); }
+    draw(){
+      ctx.fillStyle='#ffe27a';
+      ctx.beginPath(); ctx.arc(this.x-cameraX,this.y,this.r,0,Math.PI*2); ctx.fill();
+    }
   }
 
   // Rope constraint with swing pumping; left/right adjusts length while roped
@@ -285,7 +382,6 @@
         const targetY = this.anchor.y + ny*this.len;
         const sx = targetX - c.x, sy = targetY - c.y;
         this.p.x += sx; this.p.y += sy;
-
         const vdot = this.p.vx*nx + this.p.vy*ny;
         if(vdot>0){ this.p.vx -= vdot*nx; this.p.vy -= vdot*ny; }
       }
@@ -293,7 +389,7 @@
       // damping + gravity touch
       this.p.vx *= this.damp; this.p.vy = this.p.vy*this.damp + GRAV*0.16;
 
-      // pump swing with left/right handled in player (length change here not needed)
+      // swing pumping (tangent impulse)
       const tx=-ny, ty=nx;
       if(input.left)  { this.p.vx += tx*0.065; this.p.vy += ty*0.065; }
       if(input.right) { this.p.vx -= tx*0.065; this.p.vy -= ty*0.065; }
@@ -388,7 +484,7 @@
     terrain = genTerrain();
     players = [];
     bullets = []; ropes = []; fx=[];
-    timeLeft = 120; score=0; running=true;
+    timeLeft = 120; score=0; running=true; cameraX=0; tick=0;
 
     // Spawn human + 3 bots
     const xs=[50, 700, 1100, 1400];
@@ -401,6 +497,7 @@
 
   function update(){
     if(!running) return;
+    tick++;
     timeLeft -= 1/60; if(timeLeft<=0){ timeLeft=0; running=false; }
 
     // AI
@@ -416,7 +513,7 @@
       });
     }
 
-    // Ropes (constraint first)
+    // Ropes first (constraint)
     for(const r of [...ropes]) r.update();
 
     // Players & bullets
@@ -444,19 +541,4 @@
     for(let x=c0; x<=c1; x++){
       const px = x*CELL - cameraX;
       for(let y=0;y<ROWS;y++){
-        if(terrain[y][x]){ ctx.fillStyle = '#334e6e'; ctx.fillRect(px, y*CELL, CELL, CELL); }
-      }
-    }
-    for(const r of ropes) r.draw();
-    for(const b of bullets) b.draw();
-    for(const e of fx) e.draw();
-    for(const p of players) p.draw();
-  }
-
-  function loop(){ update(); draw(); requestAnimationFrame(loop); }
-
-  start(); loop();
-})();
-</script>
-</body>
-</html>
+   
