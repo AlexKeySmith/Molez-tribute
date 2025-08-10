@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1,user-scalable=no" />
-<title>MoleZ • Simple Grapple Hold (Shorten) / Release (Lengthen) + Bots</title>
+<title>MoleZ • Grapple Fail FX + Bots</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;overflow:hidden}
@@ -107,7 +107,7 @@
 
   // ---------- Entities ----------
   const GRAV=0.28;
-  let players=[], bullets=[], ropes=[];
+  let players=[], bullets=[], ropes=[], fx=[];
   let timeLeft=120, score=0, running=true;
   let cameraX=0;
 
@@ -118,57 +118,46 @@
   class Player{
     constructor(x,y,color,isBot=false){
       this.x=x; this.y=y; this.vx=0; this.vy=0; this.w=12; this.h=12;
-      this.color=color; this.isBot=isBot; this.aim=0; this.face=1; // +1 right, -1 left
+      this.color=color; this.isBot=isBot; this.aim=0; this.face=1;
       this.onGround=false; this.jumpCd=0; this.fireCd=0; this.hookCd=0; this.rope=null;
       this.hp=100; this._grappleHeldPrev=false;
     }
     center(){ return {x:this.x+this.w/2,y:this.y+this.h/2}; }
 
     applyInput(inp){
-      // movement accel + facing
-      const AX = 0.4, MAX = 2.1;
-      if(inp.left)  { this.vx = Math.max(-MAX, this.vx - AX); this.face = -1; }
-      if(inp.right) { this.vx = Math.min( MAX, this.vx + AX); this.face =  1; }
+      // movement + facing
+      const AX=0.4, MAX=2.1;
+      if(inp.left)  { this.vx = Math.max(-MAX, this.vx - AX); this.face=-1; }
+      if(inp.right) { this.vx = Math.min( MAX, this.vx + AX); this.face= 1; }
       if(!inp.left && !inp.right) this.vx *= 0.86;
 
-      // aim (always)
-      const A_STEP = 0.06;
+      // aiming
+      const A_STEP=0.06;
       if(inp.aimUp)   this.aim -= A_STEP;
       if(inp.aimDown) this.aim += A_STEP;
       this.aim = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.aim));
 
-      // grapple control:
-      // - Rising edge of grapple when not roped => shoot
+      // grapple: rising edge to shoot; while attached, hold to shorten, release to lengthen
       if (inp.grapple && !this._grappleHeldPrev && !this.rope && this.hookCd<=0) {
         this.shootGrapple();
-        this.hookCd = 12;
+        this.hookCd=12;
       }
-
-      // - While roped: hold grapple to shorten, release to lengthen
       if (this.rope){
-        if (inp.grapple) {
-          this.rope.len = Math.max(this.rope.minLen, this.rope.len - this.rope.reelRate);
-        } else {
-          this.rope.len = Math.min(this.rope.maxLen, this.rope.len + this.rope.reelRate);
-        }
+        if (inp.grapple) this.rope.len = Math.max(this.rope.minLen, this.rope.len - this.rope.reelRate);
+        else             this.rope.len = Math.min(this.rope.maxLen, this.rope.len + this.rope.reelRate);
       }
 
-      // Jump: if roped -> detach; else normal jump
+      // jump: detach if roped; else normal jump
       if(inp.jump && this.jumpCd<=0){
-        if (this.rope) {
-          this.rope.detach();
-        } else if (this.onGround) {
-          this.vy=-5.2; this.onGround=false;
-        }
+        if(this.rope){ this.rope.detach(); }
+        else if(this.onGround){ this.vy=-5.2; this.onGround=false; }
         this.jumpCd=14;
       }
 
-      // Fire
+      // fire
       if(inp.fire && this.fireCd<=0){ this.fire(); this.fireCd=12; }
 
-      this._grappleHeldPrev = !!inp.grapple;
-
-      // cooldowns
+      this._grappleHeldPrev=!!inp.grapple;
       this.jumpCd=Math.max(0,this.jumpCd-1);
       this.fireCd=Math.max(0,this.fireCd-1);
       this.hookCd=Math.max(0,this.hookCd-1);
@@ -179,28 +168,25 @@
       let target=null, best=1e9;
       for(const p of players){ if(p===this||p.hp<=0) continue; const dx=p.x-this.x, dy=p.y-this.y, d=dx*dx+dy*dy; if(d<best){best=d; target=p;} }
       const inp = {left:false,right:false,aimUp:false,aimDown:false,jump:false,fire:false,grapple:false};
-      // wander
-      if(Math.random()<0.02) this._dir = (Math.random()<0.5?-1:1);
+      if(Math.random()<0.02) this._dir=(Math.random()<0.5?-1:1);
       if(this._dir<0) inp.left=true; else inp.right=true;
       if(this.onGround && Math.random()<0.02) inp.jump=true;
 
       if(target){
         const c=this.center(), tc=target.center();
-        const ang = Math.atan2(tc.y - c.y, tc.x - c.x);
-        if(ang < this.aim-0.05) inp.aimUp=true;
-        if(ang > this.aim+0.05) inp.aimDown=true;
-
+        const ang=Math.atan2(tc.y-c.y, tc.x-c.x);
+        if(ang<this.aim-0.05) inp.aimUp=true;
+        if(ang>this.aim+0.05) inp.aimDown=true;
         if(Math.random()<0.06) inp.fire=true;
 
-        // Bots: sometimes try to grapple upwards; hold to reel some frames
         if(!this.rope && Math.random()<0.012){
-          this.face = (Math.cos(this.aim)>=0) ? 1 : -1;
-          this.aim = -Math.PI/2 + (Math.random()*0.6 - 0.3);
-          inp.grapple=true; // rising edge will fire
-        } else if (this.rope) {
-          // randomly hold or release to modulate length
+          this.face=(Math.cos(this.aim)>=0)?1:-1;
+          this.aim=-Math.PI/2+(Math.random()*0.6-0.3);
+          inp.grapple=true; // rising edge shoots
+        } else if(this.rope){
+          // hold/release randomly to modulate length, sometimes detach by jump
           inp.grapple = Math.random()<0.5;
-          if(Math.random()<0.006) inp.jump=true; // sometimes detach via jump
+          if(Math.random()<0.006) inp.jump=true;
         }
       }
       this.applyInput(inp);
@@ -208,30 +194,24 @@
 
     fire(){
       const c=this.center();
-      const dx = Math.cos(this.aim) * this.face;
-      const dy = Math.sin(this.aim);
-      const speed=3.2;
-      bullets.push(new Bullet(
-        c.x + dx*8,
-        c.y + dy*8,
-        dx*speed,
-        dy*speed,
-        this
-      ));
+      const dx=Math.cos(this.aim)*this.face, dy=Math.sin(this.aim);
+      const sp=3.2;
+      bullets.push(new Bullet(c.x+dx*8,c.y+dy*8,dx*sp,dy*sp,this));
     }
 
     shootGrapple(){
       const c=this.center(), maxLen=260, step=4;
-      const dirx = Math.cos(this.aim) * this.face;
-      const diry = Math.sin(this.aim);
+      const dirx=Math.cos(this.aim)*this.face, diry=Math.sin(this.aim);
       for(let t=8;t<maxLen;t+=step){
         const tx=c.x+dirx*t, ty=c.y+diry*t;
         if(isSolid(tx,ty)){
-          const len = Math.max(80, Math.min(t, 200));
+          const len=Math.max(80,Math.min(t,200));
           const r=new Rope(this,{x:tx,y:ty},len);
-          this.rope=r; ropes.push(r); break;
+          this.rope=r; ropes.push(r); return;
         }
       }
+      // no hit -> spawn fail FX so it's obvious it was too short
+      fx.push(new GrappleFailFX(c.x,c.y,dirx,diry,maxLen));
     }
 
     update(){
@@ -251,8 +231,7 @@
       ctx.fillStyle=this.color;
       ctx.fillRect(this.x-cameraX,this.y,this.w,this.h);
       const c=this.center();
-      const dx = Math.cos(this.aim) * this.face;
-      const dy = Math.sin(this.aim);
+      const dx=Math.cos(this.aim)*this.face, dy=Math.sin(this.aim);
       ctx.strokeStyle=this.color; ctx.lineWidth=2;
       ctx.beginPath();
       ctx.moveTo(c.x-cameraX,c.y);
@@ -280,7 +259,7 @@
     draw(){ ctx.fillStyle='#ffe27a'; ctx.beginPath(); ctx.arc(this.x-cameraX,this.y,this.r,0,Math.PI*2); ctx.fill(); }
   }
 
-  // Constraint rope with swing pumping; length adjusted by holding/releasing grapple
+  // Rope constraint with swing pumping; length adjusted by holding/releasing grapple
   class Rope{
     constructor(player, anchor, len){
       this.p=player; this.anchor={x:anchor.x,y:anchor.y};
@@ -302,14 +281,14 @@
         const sx = targetX - c.x, sy = targetY - c.y;
         this.p.x += sx; this.p.y += sy;
 
-        const vdot = this.p.vx*nx + this.p.vy*ny; // radial
+        const vdot = this.p.vx*nx + this.p.vy*ny;
         if(vdot>0){ this.p.vx -= vdot*nx; this.p.vy -= vdot*ny; }
       }
 
-      // damping + a touch of gravity to keep pendulum lively
+      // damping + gravity touch
       this.p.vx *= this.damp; this.p.vy = this.p.vy*this.damp + GRAV*0.16;
 
-      // pump swing using left/right
+      // pump swing
       const tx=-ny, ty=nx;
       if(input.left)  { this.p.vx += tx*0.065; this.p.vy += ty*0.065; }
       if(input.right) { this.p.vx -= tx*0.065; this.p.vy -= ty*0.065; }
@@ -317,6 +296,42 @@
     update(){ this.applyConstraint(); }
     detach(){ if(this.p.rope===this) this.p.rope=null; const i=ropes.indexOf(this); if(i>=0) ropes.splice(i,1); }
     draw(){ const c=this.p.center(); ctx.strokeStyle='#84d9ff'; ctx.lineWidth=2; ctx.beginPath(); ctx.moveTo(c.x-cameraX,c.y); ctx.lineTo(this.anchor.x-cameraX,this.anchor.y); ctx.stroke(); }
+  }
+
+  // --- Grapple fail FX (when out of range) ---
+  class GrappleFailFX{
+    constructor(ox,oy,dx,dy,maxLen){
+      this.ox=ox; this.oy=oy; this.dx=dx; this.dy=dy; this.len=maxLen;
+      this.age=0; this.ttl=22; // frames
+    }
+    update(){ this.age++; }
+    draw(){
+      const t = this.age/this.ttl;
+      // ease out then snap back: extend for first 60%, retract for last 40%
+      const extend = t < 0.6 ? (t/0.6) : Math.max(0,1 - (t-0.6)/0.4);
+      const L = this.len * extend;
+      const x1 = this.ox - cameraX, y1 = this.oy;
+      const x2 = x1 + this.dx * L,  y2 = y1 + this.dy * L;
+
+      // flicker red/white and a tip dot to make it obvious
+      const blink = (this.age%4)<2;
+      ctx.strokeStyle = blink ? '#ff7b7b' : '#ffffff';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4,4]);
+      ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = '#ff4d4d';
+      ctx.beginPath(); ctx.arc(x2,y2,3,0,Math.PI*2); ctx.fill();
+
+      // small "Too short" text near muzzle at peak extend
+      if(Math.abs(t-0.6) < 0.1){
+        ctx.fillStyle='rgba(255,120,120,0.9)';
+        ctx.font='12px system-ui, sans-serif';
+        ctx.fillText('Too short!', x1+6, y1-8);
+      }
+    }
+    alive(){ return this.age < this.ttl; }
   }
 
   // ---------- Input ----------
@@ -363,7 +378,7 @@
     for(let yy=0; yy<ROWS*CELL-30; yy++){
       if(isSolid(x, yy+18)){ y=yy-18; break; }
     }
-    carve(x, y+6, 14); // carve a bubble to avoid wedging
+    carve(x, y+6, 14);
     return {x:Math.max(0,x-6), y:Math.max(0,y)};
   }
 
@@ -371,7 +386,7 @@
   function start(){
     terrain = genTerrain();
     players = [];
-    bullets = []; ropes = [];
+    bullets = []; ropes = []; fx=[];
     timeLeft = 120; score=0; running=true;
 
     // Spawn human + 3 bots
@@ -390,7 +405,7 @@
     // AI
     for(const p of players){ if(p.isBot && p.hp>0) p.thinkBot(); }
 
-    // Human input
+    // Human
     const me = players[0];
     if(me && me.hp>0){
       me.applyInput({
@@ -400,19 +415,22 @@
       });
     }
 
-    // Ropes
+    // Ropes first (constraint)
     for(const r of [...ropes]) r.update();
 
     // Players & bullets
     for(const p of players){ if(p.hp>0) p.update(); }
     bullets = bullets.filter(b=>b.life>0); for(const b of bullets) b.update();
 
+    // Effects
+    fx = fx.filter(e=>e.alive()); for(const e of fx) e.update();
+
     // Camera
     if(me){ const target = Math.max(0, Math.min(me.x - W*0.45, COLS*CELL - W)); cameraX += (target - cameraX)*0.12; }
 
     // HUD
-    timeEl.textContent = Math.ceil(timeLeft);
-    scoreEl.textContent = score;
+    document.getElementById('time').textContent = Math.ceil(timeLeft);
+    document.getElementById('score').textContent = score;
     pcountEl.textContent = players.length;
     bcountEl.textContent = players.filter(p=>p.isBot).length;
   }
@@ -430,6 +448,8 @@
     }
     for(const r of ropes) r.draw();
     for(const b of bullets) b.draw();
+    // FX last so it sits above terrain but below HUD
+    for(const e of fx) e.draw();
     for(const p of players) p.draw();
   }
 
