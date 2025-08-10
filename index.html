@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1,user-scalable=no" />
-<title>MoleZ • Swinging Grapple + Aim + Facing + Bots</title>
+<title>MoleZ • Simple Grapple Hold (Shorten) / Release (Lengthen) + Bots</title>
 <style>
   *{box-sizing:border-box;margin:0;padding:0}
   html,body{height:100%;overflow:hidden}
@@ -18,8 +18,6 @@
   .btn{width:48px;height:48px;border-radius:8px;background:#15355c;border:1px solid #2c5588;color:#e6eaf5;display:flex;align-items:center;justify-content:center;font-weight:600;user-select:none;cursor:pointer}
   .btn:active{filter:brightness(1.2)}
   .act{width:72px;height:50px}
-  .reelRow{display:flex; gap:6px; justify-content:center}
-  .mini{width:56px;height:38px;font-size:12px}
 </style>
 </head>
 <body>
@@ -42,10 +40,6 @@
     <button class="btn act" id="jump">Jump</button>
     <button class="btn act" id="fire">Fire</button>
     <button class="btn act" id="hook">Grapple</button>
-    <div class="reelRow">
-      <button class="btn mini" id="reelOut">– Reel</button>
-      <button class="btn mini" id="reelIn">Reel +</button>
-    </div>
   </div>
 </div>
 
@@ -126,7 +120,7 @@
       this.x=x; this.y=y; this.vx=0; this.vy=0; this.w=12; this.h=12;
       this.color=color; this.isBot=isBot; this.aim=0; this.face=1; // +1 right, -1 left
       this.onGround=false; this.jumpCd=0; this.fireCd=0; this.hookCd=0; this.rope=null;
-      this.hp=100;
+      this.hp=100; this._grappleHeldPrev=false;
     }
     center(){ return {x:this.x+this.w/2,y:this.y+this.h/2}; }
 
@@ -137,21 +131,44 @@
       if(inp.right) { this.vx = Math.min( MAX, this.vx + AX); this.face =  1; }
       if(!inp.left && !inp.right) this.vx *= 0.86;
 
-      // aim always (independent of rope)
+      // aim (always)
       const A_STEP = 0.06;
       if(inp.aimUp)   this.aim -= A_STEP;
       if(inp.aimDown) this.aim += A_STEP;
       this.aim = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.aim));
 
-      // rope reel (only when roped)
-      if(this.rope){
-        if(inp.reelIn)  this.rope.len = Math.max(this.rope.minLen, this.rope.len - this.rope.reelRate);
-        if(inp.reelOut) this.rope.len = Math.min(this.rope.maxLen, this.rope.len + this.rope.reelRate);
+      // grapple control:
+      // - Rising edge of grapple when not roped => shoot
+      if (inp.grapple && !this._grappleHeldPrev && !this.rope && this.hookCd<=0) {
+        this.shootGrapple();
+        this.hookCd = 12;
       }
 
-      if(inp.jump && this.onGround && this.jumpCd<=0){ this.vy=-5.2; this.onGround=false; this.jumpCd=14; }
+      // - While roped: hold grapple to shorten, release to lengthen
+      if (this.rope){
+        if (inp.grapple) {
+          this.rope.len = Math.max(this.rope.minLen, this.rope.len - this.rope.reelRate);
+        } else {
+          this.rope.len = Math.min(this.rope.maxLen, this.rope.len + this.rope.reelRate);
+        }
+      }
+
+      // Jump: if roped -> detach; else normal jump
+      if(inp.jump && this.jumpCd<=0){
+        if (this.rope) {
+          this.rope.detach();
+        } else if (this.onGround) {
+          this.vy=-5.2; this.onGround=false;
+        }
+        this.jumpCd=14;
+      }
+
+      // Fire
       if(inp.fire && this.fireCd<=0){ this.fire(); this.fireCd=12; }
-      if(inp.grapple && this.hookCd<=0){ this.toggleGrapple(); this.hookCd=14; }
+
+      this._grappleHeldPrev = !!inp.grapple;
+
+      // cooldowns
       this.jumpCd=Math.max(0,this.jumpCd-1);
       this.fireCd=Math.max(0,this.fireCd-1);
       this.hookCd=Math.max(0,this.hookCd-1);
@@ -161,7 +178,7 @@
       if(!this.isBot || this.hp<=0) return;
       let target=null, best=1e9;
       for(const p of players){ if(p===this||p.hp<=0) continue; const dx=p.x-this.x, dy=p.y-this.y, d=dx*dx+dy*dy; if(d<best){best=d; target=p;} }
-      const inp = {left:false,right:false,aimUp:false,aimDown:false,jump:false,fire:false,grapple:false,reelIn:false,reelOut:false};
+      const inp = {left:false,right:false,aimUp:false,aimDown:false,jump:false,fire:false,grapple:false};
       // wander
       if(Math.random()<0.02) this._dir = (Math.random()<0.5?-1:1);
       if(this._dir<0) inp.left=true; else inp.right=true;
@@ -175,15 +192,15 @@
 
         if(Math.random()<0.06) inp.fire=true;
 
+        // Bots: sometimes try to grapple upwards; hold to reel some frames
         if(!this.rope && Math.random()<0.012){
           this.face = (Math.cos(this.aim)>=0) ? 1 : -1;
           this.aim = -Math.PI/2 + (Math.random()*0.6 - 0.3);
-          inp.grapple=true;
-        }
-        if(this.rope){
-          if(Math.random()<0.04) inp.reelIn=true;
-          if(Math.random()<0.02) inp.reelOut=true;
-          if(Math.random()<0.006) inp.grapple=true; // detach
+          inp.grapple=true; // rising edge will fire
+        } else if (this.rope) {
+          // randomly hold or release to modulate length
+          inp.grapple = Math.random()<0.5;
+          if(Math.random()<0.006) inp.jump=true; // sometimes detach via jump
         }
       }
       this.applyInput(inp);
@@ -203,8 +220,7 @@
       ));
     }
 
-    toggleGrapple(){
-      if(this.rope){ this.rope.detach(); return; }
+    shootGrapple(){
       const c=this.center(), maxLen=260, step=4;
       const dirx = Math.cos(this.aim) * this.face;
       const diry = Math.sin(this.aim);
@@ -264,7 +280,7 @@
     draw(){ ctx.fillStyle='#ffe27a'; ctx.beginPath(); ctx.arc(this.x-cameraX,this.y,this.r,0,Math.PI*2); ctx.fill(); }
   }
 
-  // Constraint rope with reel in/out + swing pumping
+  // Constraint rope with swing pumping; length adjusted by holding/releasing grapple
   class Rope{
     constructor(player, anchor, len){
       this.p=player; this.anchor={x:anchor.x,y:anchor.y};
@@ -290,7 +306,7 @@
         if(vdot>0){ this.p.vx -= vdot*nx; this.p.vy -= vdot*ny; }
       }
 
-      // damping + gravity
+      // damping + a touch of gravity to keep pendulum lively
       this.p.vx *= this.damp; this.p.vy = this.p.vy*this.damp + GRAV*0.16;
 
       // pump swing using left/right
@@ -304,13 +320,11 @@
   }
 
   // ---------- Input ----------
-  const input = {left:false,right:false,aimUp:false,aimDown:false,jump:false,fire:false,grapple:false,reelIn:false,reelOut:false};
+  const input = {left:false,right:false,aimUp:false,aimDown:false,jump:false,fire:false,grapple:false};
 
   addEventListener('keydown',e=>{
     const k=e.key.toLowerCase();
-    // prevent browser scrolling on arrows/space
     if(['arrowup','arrowdown','arrowleft','arrowright',' '].includes(k)) e.preventDefault();
-
     if(k==='arrowleft'||k==='a') input.left=true;
     if(k==='arrowright'||k==='d') input.right=true;
     if(k==='arrowup'||k==='w') input.aimUp=true;
@@ -318,10 +332,6 @@
     if(k===' ') input.jump=true;
     if(k==='f') input.fire=true;
     if(k==='g') input.grapple=true;
-
-    // reeling keys
-    if(k==='q') input.reelOut=true;
-    if(k==='e') input.reelIn=true;
   }, {passive:false});
 
   addEventListener('keyup',e=>{
@@ -333,9 +343,6 @@
     if(k===' ') input.jump=false;
     if(k==='f') input.fire=false;
     if(k==='g') input.grapple=false;
-
-    if(k==='q') input.reelOut=false;
-    if(k==='e') input.reelIn=false;
   });
 
   // Touch bindings
@@ -348,7 +355,6 @@
   };
   bind('l','left'); bind('r','right'); bind('u','aimUp'); bind('d','aimDown');
   bind('jump','jump'); bind('fire','fire'); bind('hook','grapple');
-  bind('reelIn','reelIn'); bind('reelOut','reelOut');
 
   // ---------- Spawning helpers ----------
   function safeSpawn(xGuess){
@@ -381,7 +387,7 @@
     if(!running) return;
     timeLeft -= 1/60; if(timeLeft<=0){ timeLeft=0; running=false; }
 
-    // AI first
+    // AI
     for(const p of players){ if(p.isBot && p.hp>0) p.thinkBot(); }
 
     // Human input
@@ -390,7 +396,6 @@
       me.applyInput({
         left:input.left, right:input.right,
         aimUp:input.aimUp, aimDown:input.aimDown,
-        reelIn:input.reelIn, reelOut:input.reelOut,
         jump:input.jump, fire:input.fire, grapple:input.grapple
       });
     }
