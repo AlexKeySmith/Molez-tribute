@@ -1,364 +1,547 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+<title>Molez-style Cave • Grapple + Bots</title>
 <style>
-html, body {
-  margin: 0;
-  padding: 0;
-  background: black;
-  overflow: hidden;
-  touch-action: none;
-}
-#gameCanvas {
-  display: block;
-  background: black;
-}
-.control {
-  position: absolute;
-  z-index: 10;
-  user-select: none;
-}
-.dpad {
-  left: 10px;
-  bottom: 10px;
-  width: 140px;
-  height: 140px;
-}
-.dpad button {
-  width: 40px; height: 40px;
-  position: absolute;
-  opacity: 0.5;
-}
-#btnLeft { left: 0; top: 50px; }
-#btnRight { right: 0; top: 50px; }
-#btnUp { left: 50px; top: 0; }
-#btnDown { left: 50px; bottom: 0; }
-.buttons {
-  right: 10px;
-  bottom: 10px;
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.buttons button {
-  width: 60px; height: 60px;
-  border-radius: 50%;
-  opacity: 0.5;
-  font-size: 14px;
-}
-.message {
-  position: absolute;
-  top: 40%;
-  left: 50%;
-  transform: translate(-50%,-50%);
-  font-family: sans-serif;
-  font-size: 24px;
-  color: white;
-  background: rgba(0,0,0,0.5);
-  padding: 20px;
-}
+  html,body{margin:0;padding:0;background:#000;color:#fff;overflow:hidden;touch-action:none;font-family:system-ui,Segoe UI,Roboto,Arial,sans-serif}
+  #game{display:block;background:#050505}
+  /* Overlay controls */
+  .ui{position:fixed;inset:0;pointer-events:none}
+  .pad,.btn{pointer-events:auto;user-select:none}
+  .pad{position:absolute;left:12px;bottom:12px;width:150px;height:150px;background:rgba(255,255,255,.06);border-radius:16px}
+  .pad button{position:absolute;width:48px;height:48px;border:0;border-radius:10px;background:rgba(255,255,255,.15);color:#fff;font-size:22px}
+  #left {left:6px; top:51px}
+  #right{right:6px;top:51px}
+  #up   {left:51px;top:6px}
+  #down {left:51px;bottom:6px}
+  .btns{position:absolute;right:12px;bottom:12px;display:flex;flex-direction:column;gap:12px}
+  .btn{width:84px;height:84px;border-radius:50%;border:0;background:rgba(255,255,255,.14);color:#fff;font-weight:700}
+  .btn.fire{background:linear-gradient(180deg,#ff6 0%,#f70 100%)}
+  .btn.grapple{background:linear-gradient(180deg,#9ef 0%,#08c 100%)}
+  .btn.jump{background:linear-gradient(180deg,#9f9 0%,#0a4 100%)}
+  .btn:active,.pad button:active{filter:brightness(1.15)}
+  #msg{position:fixed;left:50%;top:50%;transform:translate(-50%,-50%);background:rgba(0,0,0,.7);padding:18px 24px;border-radius:12px;font-size:18px;display:none}
+  #hud{position:fixed;left:12px;top:10px;font:12px/1.2 monospace;color:#adf;background:rgba(0,0,0,.35);padding:6px 8px;border-radius:8px}
 </style>
 </head>
 <body>
+<canvas id="game"></canvas>
 
-<canvas id="gameCanvas"></canvas>
-
-<div class="control dpad">
-  <button id="btnLeft">◀</button>
-  <button id="btnRight">▶</button>
-  <button id="btnUp">▲</button>
-  <button id="btnDown">▼</button>
+<div class="ui">
+  <div class="pad" id="dpad">
+    <button id="left">◀</button>
+    <button id="right">▶</button>
+    <button id="up">▲</button>
+    <button id="down">▼</button>
+  </div>
+  <div class="btns">
+    <button class="btn fire" id="fire">FIRE</button>
+    <button class="btn grapple" id="grapple">HOOK</button>
+    <button class="btn jump" id="jump">JUMP</button>
+  </div>
 </div>
 
-<div class="control buttons">
-  <button id="btnFire">Fire</button>
-  <button id="btnGrapple">Hook</button>
-  <button id="btnJump">Jump</button>
-</div>
-
-<div id="message" class="message">Tap to Start</div>
+<div id="hud">HP: <span id="hpv">-</span> | Ammo: <span id="amv">-</span></div>
+<div id="msg">Tap to Start</div>
 
 <script>
 (() => {
-  const canvas = document.getElementById('gameCanvas');
-  const ctx = canvas.getContext('2d');
-  let WIDTH, HEIGHT;
-  function resize() {
-    WIDTH = window.innerWidth;
-    HEIGHT = window.innerHeight;
-    canvas.width = WIDTH;
-    canvas.height = HEIGHT;
+  // ===== Canvas & sizing =====
+  const cvs = document.getElementById('game');
+  const ctx = cvs.getContext('2d');
+  let W=0,H=0, DPR = Math.min(2, window.devicePixelRatio || 1);
+  function resize(){
+    W = Math.max(window.innerWidth, 640);
+    H = Math.max(window.innerHeight, 360);
+    cvs.width = Math.floor(W * DPR);
+    cvs.height = Math.floor(H * DPR);
+    cvs.style.width = W + 'px';
+    cvs.style.height = H + 'px';
+    ctx.setTransform(DPR,0,0,DPR,0,0);
   }
-  window.addEventListener('resize', resize);
+  window.addEventListener('resize', resize, {passive:true});
   resize();
 
-  // Map settings
-  const BLOCK_SIZE = 6;
-  const TERRAIN_COLS = 300;
-  const TERRAIN_ROWS = Math.floor(HEIGHT / BLOCK_SIZE);
+  // ===== Map & terrain (cellular automata caves) =====
+  const B = 6;                               // block size (smaller pixels)
+  const COLS = 360;                          // map width in cells (wide)
+  const ROWS = 140;                          // map height in cells (tall)
+  const MAP_W = COLS * B, MAP_H = ROWS * B;
+  const WALL = 2;                            // indestructible wall
+  const SOLID = 1;                           // normal solid (destructible)
+  const AIR = 0;                             // empty
+
+  /** terrain[x][y] */
   let terrain = [];
 
-  function generateTerrain() {
-    terrain = [];
-    for (let x = 0; x < TERRAIN_COLS; x++) {
-      terrain[x] = [];
-      for (let y = 0; y < TERRAIN_ROWS; y++) {
-        terrain[x][y] = (y > TERRAIN_ROWS / 2 + Math.sin(x / 10) * 5) ? 1 : 0;
+  function genCaves() {
+    // init random
+    terrain = Array.from({length:COLS}, ()=>Array(ROWS).fill(AIR));
+    for (let x=0; x<COLS; x++){
+      for (let y=0; y<ROWS; y++){
+        const border = (x===0||y===0||x===COLS-1||y===ROWS-1);
+        if (border){ terrain[x][y]=WALL; continue; }
+        // denser lower half; sparse upper to allow ceilings
+        const base = y > ROWS*0.55 ? 0.62 : (y > ROWS*0.35 ? 0.45 : 0.35);
+        terrain[x][y] = (Math.random() < base) ? SOLID : AIR;
       }
     }
-    // add borders
-    for (let y = 0; y < TERRAIN_ROWS; y++) {
-      terrain[0][y] = terrain[TERRAIN_COLS-1][y] = 1;
+    // smooth (5 steps)
+    for (let s=0; s<5; s++) smoothStep();
+    // carve some tunnels
+    for (let i=0;i<220;i++){
+      let cx = Math.floor(Math.random()*COLS), cy = Math.floor(Math.random()*ROWS);
+      const r = 2 + Math.floor(Math.random()*4);
+      carveCircle(cx, cy, r);
+    }
+    // enforce borders indestructible
+    for (let x=0;x<COLS;x++){ terrain[x][0]=WALL; terrain[x][ROWS-1]=WALL; }
+    for (let y=0;y<ROWS;y++){ terrain[0][y]=WALL; terrain[COLS-1][y]=WALL; }
+  }
+  function smoothStep(){
+    const next = Array.from({length:COLS}, ()=>Array(ROWS).fill(AIR));
+    for (let x=1; x<COLS-1; x++){
+      for (let y=1; y<ROWS-1; y++){
+        if (terrain[x][y]===WALL){ next[x][y]=WALL; continue; }
+        let cnt=0;
+        for (let dx=-1;dx<=1;dx++){
+          for (let dy=-1;dy<=1;dy++){
+            if (terrain[x+dx][y+dy]!==AIR) cnt++;
+          }
+        }
+        // classic CA rule (more neighbors -> fill)
+        next[x][y] = (cnt >= 5) ? SOLID : AIR;
+      }
+    }
+    terrain = next;
+  }
+  function carveCircle(cx, cy, r){
+    for (let x=cx-r; x<=cx+r; x++){
+      for (let y=cy-r; y<=cy+r; y++){
+        if (x<=0||y<=0||x>=COLS-1||y>=ROWS-1) continue;
+        if ((x-cx)*(x-cx)+(y-cy)*(y-cy)<=r*r) terrain[x][y]=AIR;
+      }
+    }
+  }
+  function isSolid(px,py){
+    const cx = Math.floor(px/B), cy = Math.floor(py/B);
+    if (cx<0||cy<0||cx>=COLS||cy>=ROWS) return true;
+    return terrain[cx][cy]!==AIR;
+  }
+  function canDestroy(px,py){
+    const cx = Math.floor(px/B), cy = Math.floor(py/B);
+    if (cx<1||cy<1||cx>=COLS-1||cy>=ROWS-1) return false;
+    return terrain[cx][cy]===SOLID;
+  }
+  function destroyAt(px,py,rad=1){
+    const cx = Math.floor(px/B), cy = Math.floor(py/B), r = Math.max(1,rad);
+    for (let x=cx-r; x<=cx+r; x++){
+      for (let y=cy-r; y<=cy+r; y++){
+        if (x<1||y<1||x>=COLS-1||y>=ROWS-1) continue;
+        if ((x-cx)*(x-cx)+(y-cy)*(y-cy)<=r*r && terrain[x][y]===SOLID){
+          terrain[x][y]=AIR;
+        }
+      }
     }
   }
 
-  // Utility
-  function isSolid(px, py) {
-    let cx = Math.floor(px / BLOCK_SIZE);
-    let cy = Math.floor(py / BLOCK_SIZE);
-    if (cx < 0 || cy < 0 || cx >= TERRAIN_COLS || cy >= TERRAIN_ROWS) return true;
-    return terrain[cx][cy] === 1;
-  }
-  function destroyBlock(px, py) {
-    let cx = Math.floor(px / BLOCK_SIZE);
-    let cy = Math.floor(py / BLOCK_SIZE);
-    if (cx >= 0 && cy >= 0 && cx < TERRAIN_COLS && cy < TERRAIN_ROWS) {
-      terrain[cx][cy] = 0;
-    }
+  // ===== Camera (scroll) =====
+  let scrollX = 0; let autoFollow = true;
+  function clampScroll(){
+    scrollX = Math.max(0, Math.min(scrollX, MAP_W - W));
   }
 
-  // Player
-  class Player {
-    constructor(id, x, y, color, isBot = false) {
-      this.id = id;
-      this.x = x;
-      this.y = y;
-      this.vx = 0;
-      this.vy = 0;
-      this.angle = 0;
-      this.color = color;
-      this.isBot = isBot;
-      this.health = 100;
-      this.onGround = false;
-      this.grapple = null;
-    }
-    update() {
-      // Gravity
-      this.vy += 0.5;
-      this.x += this.vx;
-      this.y += this.vy;
+  // Edge look-ahead near boundaries so you see slightly ahead
+  function targetScrollFor(player){
+    const center = player.x - W/2;
+    const look = player.vx>=0 ? 120 : -120; // lookahead based on movement
+    let target = center + look;
+    target = Math.max(0, Math.min(target, MAP_W - W));
+    return target;
+  }
 
-      // Terrain collision
-      if (isSolid(this.x, this.y+5)) {
-        this.y = Math.floor(this.y / BLOCK_SIZE) * BLOCK_SIZE - 5;
+  // ===== Entities =====
+  const MAX_HP = 100;
+  const BULLET_SPEED = 8;
+  const BULLET_RADIUS = 2;
+  const GRAV = 0.32;
+  const FRICTION = 0.88;
+
+  const players = [];
+  const bullets = [];
+  const ropes = [];
+  const pickups = []; // {x,y,type:'health'|'ammo',vy,ttl,spin}
+
+  // HUD
+  const hpv = document.getElementById('hpv');
+  const amv = document.getElementById('amv');
+
+  // Helpers
+  function rnd(a,b){ return a + Math.random()*(b-a); }
+  function spawnPick(type,x,y){
+    pickups.push({
+      type, x, y,
+      baseY: y, t: 0,
+      vy: -rnd(0.5,1.5),
+      ttl: 1000 + Math.floor(Math.random()*800),
+      spin: Math.random()*Math.PI*2
+    });
+  }
+
+  class Player{
+    constructor(id,x,y,color,isBot=false){
+      this.id=id; this.x=x; this.y=y; this.vx=0; this.vy=0;
+      this.w=12; this.h=18; this.color=color; this.isBot=isBot;
+      this.onGround=false; this.hp=MAX_HP; this.aim = -0.1; // radians
+      this.ammo = 60;
+      this.rope = null; // instance of Rope
+      this.dead=false;
+    }
+    rect(){ return {x:this.x, y:this.y, w:this.w, h:this.h}; }
+    center(){ return {x:this.x+this.w/2, y:this.y+this.h/2}; }
+    takeDamage(d){
+      if(this.dead) return;
+      this.hp = Math.max(0, this.hp - d);
+      if (this.hp<=0){ this.dead=true; this.onGround=false; this.vx=this.vy=0; this.dropLoot(); if (this.rope) this.rope.detach(); }
+    }
+    dropLoot(){
+      // Drop one health and one ammo pickup
+      spawnPick('health', this.x+this.w/2, this.y);
+      spawnPick('ammo',   this.x+this.w/2, this.y);
+    }
+    fire(){
+      if(this.dead || this.ammo<=0) return;
+      const c = this.center();
+      const vx = Math.cos(this.aim)*BULLET_SPEED;
+      const vy = Math.sin(this.aim)*BULLET_SPEED;
+      bullets.push(new Bullet(c.x, c.y, vx, vy, this));
+      this.ammo--;
+    }
+    grappleToggle(){
+      if(this.dead) return;
+      if(this.rope){ this.rope.detach(); this.rope=null; return; }
+      const c = this.center();
+      const dir = {x:Math.cos(this.aim), y:Math.sin(this.aim)};
+      this.rope = new Rope(this, c.x, c.y, dir);
+      ropes.push(this.rope);
+    }
+    jump(){
+      if(this.dead) return;
+      if(this.onGround){ this.vy = -6.6; this.onGround=false; }
+    }
+    thinkBot(){
+      if(!this.isBot || this.dead) return;
+      // Very simple bot: wander, sometimes jump, sometimes shoot, occasional grapple
+      if (Math.random()<0.02) this.vx += (Math.random()<0.5?-1:1)*0.8;
+      if (this.onGround && Math.random()<0.02) this.jump();
+      if (Math.random()<0.02) this.aim += (Math.random()-0.5)*0.4;
+      if (this.ammo>0 && Math.random()<0.03) this.fire();
+      if (!this.rope && Math.random()<0.005) this.grappleToggle();
+      if (this.rope && Math.random()<0.006) this.grappleToggle(); // release
+      // clamp aim upwards mostly
+      this.aim = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.aim));
+    }
+    update(){
+      if(this.dead) return;
+      // gravity
+      this.vy += GRAV;
+      // rope (applies forces)
+      if(this.rope) this.rope.update();
+
+      // integrate
+      let nx = this.x + this.vx;
+      let ny = this.y + this.vy;
+
+      // horizontal collision
+      if (collides(nx, this.y, this.w, this.h)){
+        // step by step resolve
+        const step = Math.sign(this.vx)||1;
+        while(!collides(this.x+Math.sign(this.vx), this.y, this.w, this.h)) this.x+=Math.sign(this.vx);
+        this.vx = 0;
+      } else {
+        this.x = nx;
+      }
+
+      // vertical collision
+      if (collides(this.x, ny, this.w, this.h)){
+        if (this.vy>0){ // landing
+          while(!collides(this.x, this.y+1, this.w, this.h)) this.y++;
+          this.onGround=true;
+        }
+        if (this.vy<0){ // head bump
+          while(!collides(this.x, this.y-1, this.w, this.h)) this.y--;
+        }
         this.vy = 0;
-        this.onGround = true;
       } else {
-        this.onGround = false;
+        this.y = ny; this.onGround=false;
       }
 
-      // Grapple update
-      if (this.grapple) {
-        this.grapple.update();
-      }
+      // friction & clamps
+      this.vx *= FRICTION;
+      if (Math.abs(this.vx)<0.01) this.vx=0;
 
-      // Bot AI
-      if (this.isBot && Math.random() < 0.02) {
-        this.angle += (Math.random() - 0.5) * 0.5;
-        if (Math.random() < 0.3) bullets.push(new Bullet(this.x, this.y, this.angle, this.id));
-      }
+      // clamp inside map; borders are walls anyway
+      this.x = Math.max(0, Math.min(this.x, MAP_W - this.w));
+      this.y = Math.max(0, Math.min(this.y, MAP_H - this.h));
     }
-    draw() {
-      ctx.fillStyle = this.color;
-      ctx.beginPath();
-      ctx.arc(this.x - scrollX, this.y, 8, 0, Math.PI * 2);
-      ctx.fill();
-      // Health bar
-      ctx.fillStyle = 'red';
-      ctx.fillRect(this.x - 15 - scrollX, this.y - 20, 30, 4);
-      ctx.fillStyle = 'lime';
-      ctx.fillRect(this.x - 15 - scrollX, this.y - 20, 30 * (this.health/100), 4);
-
-      if (this.grapple) this.grapple.draw();
-    }
-  }
-
-  // Grapple
-  class Grapple {
-    constructor(player, angle) {
-      this.player = player;
-      this.angle = angle;
-      this.length = 0;
-      this.target = null;
-      this.vx = Math.cos(angle) * 10;
-      this.vy = Math.sin(angle) * 10;
-      this.hooked = false;
-    }
-    update() {
-      if (!this.hooked) {
-        this.length += 10;
-        let tx = this.player.x + Math.cos(this.angle) * this.length;
-        let ty = this.player.y + Math.sin(this.angle) * this.length;
-        if (isSolid(tx, ty)) {
-          this.hooked = true;
-          this.target = {x: tx, y: ty};
-        }
-      } else {
-        // Elastic physics
-        let dx = this.target.x - this.player.x;
-        let dy = this.target.y - this.player.y;
-        let dist = Math.sqrt(dx*dx + dy*dy);
-        let stretch = dist - 150;
-        let k = 0.02;
-        if (stretch > 0) {
-          let force = stretch * k;
-          this.player.vx += (dx / dist) * force;
-          this.player.vy += (dy / dist) * force;
-        }
-        // Rope smashing terrain
-        if (Math.abs(this.player.vx) + Math.abs(this.player.vy) > 8) {
-          destroyBlock(this.player.x + dx/2, this.player.y + dy/2);
-        }
-      }
-    }
-    draw() {
-      if (this.hooked) {
-        ctx.strokeStyle = 'white';
+    draw(){
+      if(this.dead){
+        ctx.fillStyle='#777';
+        ctx.fillRect(this.x - scrollX, this.y, this.w, this.h);
+      }else{
+        ctx.fillStyle=this.color;
+        ctx.fillRect(this.x - scrollX, this.y, this.w, this.h);
+        // gun direction line
+        const c=this.center();
+        ctx.strokeStyle='#fff'; ctx.lineWidth=1;
         ctx.beginPath();
-        ctx.moveTo(this.player.x - scrollX, this.player.y);
-        ctx.lineTo(this.target.x - scrollX, this.target.y);
+        ctx.moveTo(c.x - scrollX, c.y);
+        ctx.lineTo(c.x - scrollX + Math.cos(this.aim)*18, c.y + Math.sin(this.aim)*18);
         ctx.stroke();
+        // health bar
+        const hpw=30, hph=4;
+        ctx.fillStyle='rgba(255,0,0,.6)';
+        ctx.fillRect(this.x - scrollX, this.y - 8, hpw, hph);
+        ctx.fillStyle='rgba(0,255,80,.9)';
+        const ratio = Math.max(0,this.hp)/MAX_HP;
+        ctx.fillRect(this.x - scrollX, this.y - 8, hpw*ratio, hph);
       }
+      // rope drawn separately by rope.draw()
     }
   }
 
-  // Bullet
-  class Bullet {
-    constructor(x, y, angle, owner) {
-      this.x = x;
-      this.y = y;
-      this.vx = Math.cos(angle) * 6;
-      this.vy = Math.sin(angle) * 6;
-      this.owner = owner;
-    }
-    update() {
-      this.x += this.vx;
-      this.y += this.vy;
-      if (isSolid(this.x, this.y)) {
-        destroyBlock(this.x, this.y);
-        this.dead = true;
+  function collides(x,y,w,h){
+    // AABB vs terrain
+    const x0 = Math.floor(x/B), y0 = Math.floor(y/B);
+    const x1 = Math.floor((x+w-1)/B), y1 = Math.floor((y+h-1)/B);
+    for (let cx=x0; cx<=x1; cx++){
+      for (let cy=y0; cy<=y1; cy++){
+        if (cx<0||cy<0||cx>=COLS||cy>=ROWS) return true;
+        if (terrain[cx][cy]!==AIR) return true;
       }
-      for (let p of players) {
-        if (p.id !== this.owner && Math.hypot(p.x - this.x, p.y - this.y) < 8) {
-          p.health -= 10;
-          this.dead = true;
+    }
+    return false;
+  }
+
+  class Bullet{
+    constructor(x,y,vx,vy,owner){
+      this.x=x; this.y=y; this.vx=vx; this.vy=vy; this.owner=owner; this.dead=false; this.ttl=240;
+    }
+    update(){
+      if (this.dead) return;
+      this.x += this.vx; this.y += this.vy; this.ttl--;
+      // collide terrain
+      if (isSolid(this.x,this.y)){
+        if (canDestroy(this.x,this.y)) destroyAt(this.x,this.y,1);
+        this.dead=true;
+        return;
+      }
+      // hit players
+      for (const p of players){
+        if (p===this.owner || p.dead) continue;
+        const dx = (p.x+p.w/2) - this.x, dy = (p.y+p.h/2) - this.y;
+        if (dx*dx+dy*dy < (BULLET_RADIUS+6)*(BULLET_RADIUS+6)){
+          p.takeDamage(14);
+          this.dead=true; break;
         }
       }
+      if (this.ttl<=0) this.dead=true;
     }
-    draw() {
-      ctx.fillStyle = 'yellow';
+    draw(){
+      if (this.dead) return;
+      ctx.fillStyle='#ff6';
       ctx.beginPath();
-      ctx.arc(this.x - scrollX, this.y, 2, 0, Math.PI * 2);
+      ctx.arc(this.x - scrollX, this.y, BULLET_RADIUS, 0, Math.PI*2);
       ctx.fill();
     }
   }
 
-  let players = [];
-  let bullets = [];
-  let scrollX = 0;
-  let autoFollow = true;
-
-  function startGame() {
-    generateTerrain();
-    players = [];
-    bullets = [];
-    scrollX = 0;
-    autoFollow = true;
-
-    players.push(new Player(0, 100, 100, 'cyan'));
-    for (let i=1; i<=3; i++) {
-      players.push(new Player(i, 200+i*50, 100, 'orange', true));
-    }
-
-    requestAnimationFrame(gameLoop);
-  }
-
-  function gameLoop() {
-    ctx.clearRect(0, 0, WIDTH, HEIGHT);
-
-    // Update
-    for (let p of players) p.update();
-    for (let b of bullets) b.update();
-    bullets = bullets.filter(b => !b.dead);
-
-    // Auto follow
-    if (autoFollow) {
-      let me = players[0];
-      scrollX = me.x - WIDTH/2;
-      scrollX = Math.max(0, Math.min(scrollX, TERRAIN_COLS*BLOCK_SIZE - WIDTH));
-    }
-
-    // Draw terrain
-    for (let c = 0; c < TERRAIN_COLS; c++) {
-      for (let r = 0; r < TERRAIN_ROWS; r++) {
-        if (terrain[c][r] === 1) {
-          ctx.fillStyle = 'darkgray';
-          ctx.fillRect(c*BLOCK_SIZE - scrollX, r*BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+  class Rope{
+    constructor(player, sx,sy, dir){
+      this.p=player;
+      this.hooked=false; this.anchor={x:sx,y:sy};
+      this.dir=dir; this.len=0; this.maxCast=MAP_W; // cast unlimited until hit
+      this.restLen = 120; // natural length
+      this.k=0.015;       // elasticity
+      this.damp=0.98;     // damping
+      this.dead=false;
+      // cast forward until wall
+      for (let t=0; t<this.maxCast; t+=6){
+        const tx = sx + dir.x*t, ty = sy + dir.y*t;
+        if (isSolid(tx,ty)){
+          this.anchor = {x:tx,y:ty};
+          this.len = Math.hypot(tx - this.p.x, ty - this.p.y);
+          this.hooked=true; break;
         }
       }
+      if (!this.hooked) this.dead=true;
     }
+    detach(){ this.dead=true; this.hooked=false; if (this.p.rope===this) this.p.rope=null; }
+    update(){
+      if (this.dead||!this.hooked) return;
+      const c = this.p.center();
+      let dx = this.anchor.x - c.x, dy = this.anchor.y - c.y;
+      const dist = Math.hypot(dx,dy) || 0.0001;
+      // Elastic force when stretched
+      const stretch = dist - this.restLen;
+      if (stretch>0){
+        const ax = (dx/dist)*stretch*this.k;
+        const ay = (dy/dist)*stretch*this.k;
+        this.p.vx += ax;
+        this.p.vy += ay;
+      }
+      // small tangential pump from player input (swing feel)
+      if (controls.left) this.p.vx -= 0.05;
+      if (controls.right) this.p.vx += 0.05;
+      // damping
+      this.p.vx *= this.damp; this.p.vy = (this.p.vy)*this.damp + GRAV*0.2;
 
-    // Draw bullets
-    for (let b of bullets) b.draw();
+      // Whip destroy (midpoint hits hard)
+      const speed = Math.hypot(this.p.vx,this.p.vy);
+      if (speed>7){
+        const mx = (this.anchor.x + c.x)/2, my = (this.anchor.y + c.y)/2;
+        if (canDestroy(mx,my)) destroyAt(mx,my,2);
+      }
 
-    // Draw players
-    for (let p of players) p.draw();
-
-    requestAnimationFrame(gameLoop);
+      // If anchor is in destructible terrain and becomes air, detach
+      const ax = Math.floor(this.anchor.x/B), ay = Math.floor(this.anchor.y/B);
+      if (ax>0&&ay>0&&ax<COLS-1&&ay<ROWS-1 && terrain[ax][ay]===AIR) this.detach();
+    }
+    draw(){
+      if (!this.hooked||this.dead) return;
+      // elastic rope with slight sag visual
+      const c = this.p.center();
+      ctx.strokeStyle='#9ef';
+      ctx.lineWidth=2;
+      ctx.beginPath();
+      ctx.moveTo(c.x - scrollX, c.y);
+      // simple quadratic curve midpoint for elastic look
+      const midx = (c.x + this.anchor.x)/2 - scrollX;
+      const midy = (c.y + this.anchor.y)/2 + 10; // sag
+      ctx.quadraticCurveTo(midx, midy, this.anchor.x - scrollX, this.anchor.y);
+      ctx.stroke();
+    }
   }
 
-  // Controls
-  function bindButton(id, down, up) {
-    const btn = document.getElementById(id);
-    btn.addEventListener('touchstart', e => { down(); e.preventDefault(); autoFollow = true; });
-    btn.addEventListener('touchend', e => { up(); e.preventDefault(); });
+  // ===== Pickups =====
+  function updatePickups(){
+    for (let i=pickups.length-1;i>=0;i--){
+      const p = pickups[i];
+      p.t++; p.ttl--;
+      p.spin += 0.05;
+      p.vy += 0.06;
+      p.y += p.vy;
+      // float around base Y (simple sine hover)
+      p.y = p.baseY + Math.sin(p.t*0.06)*6;
+
+      // collide with map floor (so they sit in caves)
+      if (isSolid(p.x, p.y+6)) { p.baseY-=2; p.y-=2; }
+
+      // player collect
+      for (const pl of players){
+        if (pl.dead) continue;
+        const dx = (pl.x+pl.w/2) - p.x, dy = (pl.y+pl.h/2) - p.y;
+        if (dx*dx+dy*dy < 18*18){
+          if (p.type==='health') pl.hp = Math.min(MAX_HP, pl.hp+30);
+          else if (p.type==='ammo') pl.ammo += 20;
+          pickups.splice(i,1); break;
+        }
+      }
+      if (p.ttl<=0) pickups.splice(i,1);
+    }
+  }
+  function drawPickups(){
+    for (const p of pickups){
+      ctx.save();
+      ctx.translate(p.x - scrollX, p.y);
+      ctx.rotate(p.spin);
+      if (p.type==='health'){
+        ctx.fillStyle='#f55';
+        ctx.fillRect(-6,-6,12,12);
+        ctx.fillStyle='#fff';
+        ctx.fillRect(-2,-5,4,10);
+        ctx.fillRect(-5,-2,10,4);
+      }else{
+        ctx.fillStyle='#6cf';
+        ctx.beginPath(); ctx.arc(0,0,8,0,Math.PI*2); ctx.fill();
+        ctx.fillStyle='#024'; ctx.fillRect(-5,-2,10,4);
+      }
+      ctx.restore();
+    }
   }
 
-  const me = () => players[0];
-
-  bindButton('btnLeft', () => me().vx = -2, () => me().vx = 0);
-  bindButton('btnRight', () => me().vx = 2, () => me().vx = 0);
-  bindButton('btnUp', () => me().angle -= 0.1, () => {});
-  bindButton('btnDown', () => me().angle += 0.1, () => {});
-  bindButton('btnFire', () => bullets.push(new Bullet(me().x, me().y, me().angle, me().id)), () => {});
-  bindButton('btnJump', () => { if (me().onGround) me().vy = -8; }, () => {});
-  bindButton('btnGrapple', () => me().grapple = new Grapple(me(), me().angle), () => me().grapple = null);
-
-  // Pan with finger
-  let panStartX = null;
-  canvas.addEventListener('touchstart', e => {
-    if (e.touches.length === 1) {
-      autoFollow = false;
-      panStartX = e.touches[0].clientX + scrollX;
+  // ===== Spawning =====
+  function findSpawnXCol(colGuess){
+    // find air with solid just below for a valid ground tile
+    const cx = Math.max(1, Math.min(COLS-2, colGuess));
+    for (let y=1;y<ROWS-2;y++){
+      if (terrain[cx][y]===AIR && terrain[cx][y+1]!==AIR){
+        return {x:cx * B, y:y * B - 18};
+      }
     }
-  });
-  canvas.addEventListener('touchmove', e => {
-    if (panStartX !== null) {
-      scrollX = panStartX - e.touches[0].clientX;
-      scrollX = Math.max(0, Math.min(scrollX, TERRAIN_COLS*BLOCK_SIZE - WIDTH));
+    return {x:cx*B, y:(ROWS-3)*B-18};
+  }
+
+  // ===== Input =====
+  const controls = { left:false, right:false, up:false, down:false, fire:false };
+  const dpad = document.getElementById('dpad');
+  const btnL = document.getElementById('left');
+  const btnR = document.getElementById('right');
+  const btnU = document.getElementById('up');
+  const btnD = document.getElementById('down');
+  const btnFire = document.getElementById('fire');
+  const btnGrapple = document.getElementById('grapple');
+  const btnJump = document.getElementById('jump');
+
+  function bind(btn, key){
+    const on = ()=>{ controls[key]=true; autoFollow=true; };
+    const off= ()=>{ controls[key]=false; };
+    btn.addEventListener('touchstart', e=>{e.preventDefault(); on();});
+    btn.addEventListener('touchend',   e=>{e.preventDefault(); off();});
+    btn.addEventListener('mousedown', e=>{e.preventDefault(); on();});
+    btn.addEventListener('mouseup',   e=>{e.preventDefault(); off();});
+    btn.addEventListener('mouseleave',e=>{e.preventDefault(); off();});
+  }
+  bind(btnL,'left'); bind(btnR,'right'); bind(btnU,'up'); bind(btnD,'down');
+
+  btnFire.addEventListener('touchstart', e=>{e.preventDefault(); me() && me().fire(); autoFollow=true;});
+  btnFire.addEventListener('mousedown',  e=>{e.preventDefault(); me() && me().fire(); autoFollow=true;});
+  btnGrapple.addEventListener('touchstart', e=>{e.preventDefault(); me() && me().grappleToggle(); autoFollow=true;});
+  btnGrapple.addEventListener('mousedown',  e=>{e.preventDefault(); me() && me().grappleToggle(); autoFollow=true;});
+  btnJump.addEventListener('touchstart', e=>{e.preventDefault(); me() && me().jump(); autoFollow=true;});
+  btnJump.addEventListener('mousedown',  e=>{e.preventDefault(); me() && me().jump(); autoFollow=true;});
+
+  // Aim up/down via dpad up/down
+  function applyAiming(p){
+    if (!p || p.dead) return;
+    if (controls.up)   p.aim -= 0.06;
+    if (controls.down){ 
+      if (p.rope) { p.rope.detach(); } // Down also releases rope
+      p.aim += 0.06;
     }
+    // clamp mostly horizontal aiming, but allow up shots
+    p.aim = Math.max(-Math.PI*0.85, Math.min(Math.PI*0.85, p.aim));
+  }
+
+  // Keyboard (desktop testing)
+  window.addEventListener('keydown', e=>{
+    if (e.repeat) return;
+    if (e.key==='ArrowLeft' || e.key==='a') controls.left=true;
+    if (e.key==='ArrowRight'|| e.key==='d') controls.right=true;
+    if (e.key==='ArrowUp'   || e.key==='w') controls.up=true;
+    if (e.key==='ArrowDown' || e.key==='s') controls.down=true;
+    if (e.key===' ') { me() && me().fire(); }
+    if (e.key==='g') { me() && me().grappleToggle(); }
+    if (e.key==='j') { me() && me().jump(); }
+    autoFollow=true;
   });
-  canvas.addEventListener('touchend', e => {
-    panStartX = null;
+  window.addEventListener('keyup', e=>{
+    if (e.key==='ArrowLeft' || e.key==='a') controls.left=false;
+    if (e.key==='ArrowRight'|| e.key==='d') controls.right=false;
+    if (e.key==='ArrowUp'   || e.key==='w') controls.up=false;
+    if (e.key==='ArrowDown' || e.key==='s') controls.down=false;
   });
 
-  document.getElementById('message').addEventListener('click', () => {
-    document.getElementById('message').style.display = 'none';
-    startGame();
-  });
-})();
-</script>
-
-</body>
-</html>
+  // Pan camera 
