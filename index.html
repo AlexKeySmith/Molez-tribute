@@ -1,584 +1,362 @@
 <!DOCTYPE html>
-<html lang="en">
+<html>
 <head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>Molez-like Cave Game</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <style>
-  html, body {
-    margin: 0; padding: 0; overflow: hidden; background: black;
-    height: 100%; width: 100%;
-    touch-action: none; /* Disable default touch scrolling */
-    -webkit-user-select:none; user-select:none;
-  }
-  #gameCanvas {
-    display: block;
-    background: black;
-    touch-action: none;
-  }
-  #controls {
-    position: fixed;
-    top: 0; left: 0; width: 100%; height: 100%;
-    pointer-events: none;
-  }
-  .dpad, .fire-btn {
-    position: absolute;
-    pointer-events: auto;
-    background: rgba(255,255,255,0.1);
-    border-radius: 12px;
-    user-select:none;
-  }
-  #dpad {
-    left: 10px;
-    bottom: 30px;
-    width: 140px;
-    height: 140px;
-    display: grid;
-    grid-template-columns: 1fr 1fr 1fr;
-    grid-template-rows: 1fr 1fr 1fr;
-    gap: 5px;
-  }
-  #dpad > div {
-    background: rgba(255,255,255,0.2);
-    border-radius: 6px;
-    touch-action: none;
-  }
-  #dpad .center {
-    background: transparent;
-    pointer-events: none;
-  }
-  #fire {
-    right: 10px;
-    bottom: 50px;
-    width: 80px;
-    height: 80px;
-    border-radius: 40px;
-    background: rgba(255, 0, 0, 0.5);
-    font-weight: bold;
-    font-size: 20px;
-    color: white;
-    line-height: 80px;
-    text-align: center;
-    user-select:none;
-  }
-  .pressed {
-    background: rgba(255,255,255,0.5) !important;
-  }
-  #message {
-    position: fixed;
-    top: 50%; left: 50%;
-    transform: translate(-50%, -50%);
-    color: white;
-    font-family: monospace;
-    font-size: 24px;
-    background: rgba(0,0,0,0.7);
-    padding: 15px 30px;
-    border-radius: 12px;
-    display: none;
-    z-index: 10;
-  }
+html, body {
+  margin: 0;
+  padding: 0;
+  background: black;
+  overflow: hidden;
+  touch-action: none;
+}
+#gameCanvas {
+  display: block;
+  background: black;
+}
+.control {
+  position: absolute;
+  z-index: 10;
+  user-select: none;
+}
+.dpad {
+  left: 10px;
+  bottom: 10px;
+  width: 140px;
+  height: 140px;
+}
+.dpad button {
+  width: 40px; height: 40px;
+  position: absolute;
+  opacity: 0.5;
+}
+#btnLeft { left: 0; top: 50px; }
+#btnRight { right: 0; top: 50px; }
+#btnUp { left: 50px; top: 0; }
+#btnDown { left: 50px; bottom: 0; }
+.buttons {
+  right: 10px;
+  bottom: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.buttons button {
+  width: 60px; height: 60px;
+  border-radius: 50%;
+  opacity: 0.5;
+  font-size: 14px;
+}
+.message {
+  position: absolute;
+  top: 40%;
+  left: 50%;
+  transform: translate(-50%,-50%);
+  font-family: sans-serif;
+  font-size: 24px;
+  color: white;
+  background: rgba(0,0,0,0.5);
+  padding: 20px;
+}
 </style>
 </head>
 <body>
 
 <canvas id="gameCanvas"></canvas>
 
-<div id="controls">
-  <div id="dpad" class="dpad">
-    <div data-dir="up" style="grid-column: 2; grid-row: 1;"></div>
-    <div data-dir="left" style="grid-column: 1; grid-row: 2;"></div>
-    <div class="center"></div>
-    <div data-dir="right" style="grid-column: 3; grid-row: 2;"></div>
-    <div data-dir="down" style="grid-column: 2; grid-row: 3;"></div>
-  </div>
-  <div id="fire" class="fire-btn">FIRE</div>
+<div class="control dpad">
+  <button id="btnLeft">◀</button>
+  <button id="btnRight">▶</button>
+  <button id="btnUp">▲</button>
+  <button id="btnDown">▼</button>
 </div>
 
-<div id="message">Loading...</div>
+<div class="control buttons">
+  <button id="btnFire">Fire</button>
+  <button id="btnGrapple">Hook</button>
+  <button id="btnJump">Jump</button>
+</div>
+
+<div id="message" class="message">Tap to Start</div>
 
 <script>
 (() => {
-  // Constants
-  const BLOCK_SIZE = 6; // small pixels for cave
-  const TERRAIN_COLS = 150;
-  const TERRAIN_ROWS = 40;
-  const WIDTH = window.innerWidth;
-  const HEIGHT = window.innerHeight;
-
-  const GRAVITY = 0.3;
-  const PLAYER_SPEED = 1.6;
-  const JUMP_POWER = 6.5;
-  const BULLET_SPEED = 5;
-  const MAX_HEALTH = 5;
-  const ROPE_LENGTH = 60;
-
-  // Canvas setup
   const canvas = document.getElementById('gameCanvas');
-  canvas.width = WIDTH;
-  canvas.height = HEIGHT;
   const ctx = canvas.getContext('2d');
-
-  // Controls elements
-  const dpad = document.getElementById('dpad');
-  const fireBtn = document.getElementById('fire');
-  const messageDiv = document.getElementById('message');
-
-  // Game state
-  let terrain = [];
-  let players = [];
-  let bullets = [];
-  let ropes = [];
-  let scrollX = 0;
-  let controls = {
-    left: false,
-    right: false,
-    up: false,
-    down: false,
-    fire: false
-  };
-
-  let isPanning = false;
-  let panStartX = 0;
-  let panLastX = 0;
-  let autoFollow = true;
-
-  // Utility
-  function randomRange(min, max) {
-    return Math.random() * (max - min) + min;
+  let WIDTH, HEIGHT;
+  function resize() {
+    WIDTH = window.innerWidth;
+    HEIGHT = window.innerHeight;
+    canvas.width = WIDTH;
+    canvas.height = HEIGHT;
   }
+  window.addEventListener('resize', resize);
+  resize();
 
-  // Generate cave-like terrain with perlin-ish noise
+  // Map settings
+  const BLOCK_SIZE = 6;
+  const TERRAIN_COLS = 300;
+  const TERRAIN_ROWS = Math.floor(HEIGHT / BLOCK_SIZE);
+  let terrain = [];
+
   function generateTerrain() {
     terrain = [];
-    for(let col=0; col<TERRAIN_COLS; col++) {
-      terrain[col] = [];
-      // Create a smooth cave height with noise
-      let caveHeight = TERRAIN_ROWS - 10 + Math.round(5 * Math.sin(col * 0.15) + 3 * Math.cos(col * 0.3));
-      for(let row=0; row<TERRAIN_ROWS; row++) {
-        terrain[col][row] = (row >= caveHeight) ? 1 : 0; // 1 = ground block, 0 = air
+    for (let x = 0; x < TERRAIN_COLS; x++) {
+      terrain[x] = [];
+      for (let y = 0; y < TERRAIN_ROWS; y++) {
+        terrain[x][y] = (y > TERRAIN_ROWS / 2 + Math.sin(x / 10) * 5) ? 1 : 0;
       }
+    }
+    // add borders
+    for (let y = 0; y < TERRAIN_ROWS; y++) {
+      terrain[0][y] = terrain[TERRAIN_COLS-1][y] = 1;
     }
   }
 
-  // Check collision of rect with terrain
-  function collidesWithTerrain(x, y, w, h) {
-    let leftCol = Math.floor(x / BLOCK_SIZE);
-    let rightCol = Math.floor((x + w) / BLOCK_SIZE);
-    let topRow = Math.floor(y / BLOCK_SIZE);
-    let bottomRow = Math.floor((y + h) / BLOCK_SIZE);
-
-    if(leftCol < 0 || rightCol >= TERRAIN_COLS || topRow < 0 || bottomRow >= TERRAIN_ROWS) return true;
-
-    for(let c=leftCol; c<=rightCol; c++) {
-      for(let r=topRow; r<=bottomRow; r++) {
-        if(terrain[c][r] === 1) return true;
-      }
+  // Utility
+  function isSolid(px, py) {
+    let cx = Math.floor(px / BLOCK_SIZE);
+    let cy = Math.floor(py / BLOCK_SIZE);
+    if (cx < 0 || cy < 0 || cx >= TERRAIN_COLS || cy >= TERRAIN_ROWS) return true;
+    return terrain[cx][cy] === 1;
+  }
+  function destroyBlock(px, py) {
+    let cx = Math.floor(px / BLOCK_SIZE);
+    let cy = Math.floor(py / BLOCK_SIZE);
+    if (cx >= 0 && cy >= 0 && cx < TERRAIN_COLS && cy < TERRAIN_ROWS) {
+      terrain[cx][cy] = 0;
     }
-    return false;
   }
 
-  // Player class
+  // Player
   class Player {
-    constructor(id, x, y, color, isBot=false) {
+    constructor(id, x, y, color, isBot = false) {
       this.id = id;
       this.x = x;
       this.y = y;
-      this.w = 12;
-      this.h = 18;
-      this.color = color;
-      this.isBot = isBot;
       this.vx = 0;
       this.vy = 0;
+      this.angle = 0;
+      this.color = color;
+      this.isBot = isBot;
+      this.health = 100;
       this.onGround = false;
-      this.health = MAX_HEALTH;
-      this.facing = 1;
-      this.canFire = true;
-      this.fireCooldown = 0;
-      this.grappling = false;
-      this.grapplePoint = null;
-      this.ropeLength = ROPE_LENGTH;
+      this.grapple = null;
     }
-
     update() {
-      // Bots basic AI (just move randomly & jump sometimes)
-      if(this.isBot) {
-        if(Math.random() < 0.01) this.vx = (Math.random() < 0.5 ? -1 : 1) * PLAYER_SPEED;
-        if(this.onGround && Math.random() < 0.01) this.vy = -JUMP_POWER;
-        if(Math.random() < 0.01 && this.canFire) {
-          fireBullet(this);
-          this.canFire = false;
-          this.fireCooldown = 30;
-        }
-      } else {
-        // Player input
-        if(controls.left) {
-          this.vx = -PLAYER_SPEED;
-          this.facing = -1;
-        } else if(controls.right) {
-          this.vx = PLAYER_SPEED;
-          this.facing = 1;
-        } else {
-          this.vx = 0;
-        }
-        if(controls.up && this.onGround) {
-          this.vy = -JUMP_POWER;
-          this.onGround = false;
-        }
-        if(controls.fire && this.canFire) {
-          fireBullet(this);
-          this.canFire = false;
-          this.fireCooldown = 15;
-        }
-      }
-
-      // Grappling hook physics
-      if(this.grappling && this.grapplePoint) {
-        let dx = this.grapplePoint.x - (this.x + this.w/2);
-        let dy = this.grapplePoint.y - (this.y + this.h/2);
-        let dist = Math.sqrt(dx*dx + dy*dy);
-
-        // Apply swinging force
-        let angle = Math.atan2(dy, dx);
-        let tension = (dist - this.ropeLength) * 0.1;
-        let ax = Math.cos(angle) * tension;
-        let ay = Math.sin(angle) * tension;
-
-        this.vx += ax;
-        this.vy += ay;
-
-        // If rope too slack, stop grappling
-        if(dist > this.ropeLength * 1.5) {
-          this.grappling = false;
-          this.grapplePoint = null;
-        }
-      }
-
-      // Apply gravity
-      this.vy += GRAVITY;
-
-      // Move X and collide
+      // Gravity
+      this.vy += 0.5;
       this.x += this.vx;
-      if(collidesWithTerrain(this.x, this.y, this.w, this.h)) {
-        if(this.vx > 0) {
-          this.x = Math.floor(this.x / BLOCK_SIZE) * BLOCK_SIZE + BLOCK_SIZE - this.w - 0.1;
-        } else if(this.vx < 0) {
-          this.x = Math.floor(this.x / BLOCK_SIZE + 1) * BLOCK_SIZE + 0.1;
-        }
-        this.vx = 0;
-      }
-
-      // Move Y and collide
       this.y += this.vy;
-      if(collidesWithTerrain(this.x, this.y, this.w, this.h)) {
-        if(this.vy > 0) {
-          this.y = Math.floor(this.y / BLOCK_SIZE) * BLOCK_SIZE - this.h - 0.1;
-          this.onGround = true;
-        } else if(this.vy < 0) {
-          this.y = Math.floor(this.y / BLOCK_SIZE + 1) * BLOCK_SIZE + 0.1;
-        }
+
+      // Terrain collision
+      if (isSolid(this.x, this.y+5)) {
+        this.y = Math.floor(this.y / BLOCK_SIZE) * BLOCK_SIZE - 5;
         this.vy = 0;
+        this.onGround = true;
       } else {
         this.onGround = false;
       }
 
-      // Fire cooldown decrement
-      if(this.fireCooldown > 0) {
-        this.fireCooldown--;
-      } else {
-        this.canFire = true;
+      // Grapple update
+      if (this.grapple) {
+        this.grapple.update();
       }
 
-      // Clamp inside level bounds
-      if(this.x < 0) this.x = 0;
-      if(this.x > TERRAIN_COLS * BLOCK_SIZE - this.w) this.x = TERRAIN_COLS * BLOCK_SIZE - this.w;
-      if(this.y > HEIGHT) this.health = 0; // Fell off the map - dead
+      // Bot AI
+      if (this.isBot && Math.random() < 0.02) {
+        this.angle += (Math.random() - 0.5) * 0.5;
+        if (Math.random() < 0.3) bullets.push(new Bullet(this.x, this.y, this.angle, this.id));
+      }
     }
-
     draw() {
       ctx.fillStyle = this.color;
-      ctx.fillRect(this.x - scrollX, this.y, this.w, this.h);
-
-      // Draw health bar above
-      const barW = 30;
-      const barH = 5;
-      let healthRatio = this.health / MAX_HEALTH;
+      ctx.beginPath();
+      ctx.arc(this.x - scrollX, this.y, 8, 0, Math.PI * 2);
+      ctx.fill();
+      // Health bar
       ctx.fillStyle = 'red';
-      ctx.fillRect(this.x - scrollX, this.y - 10, barW, barH);
+      ctx.fillRect(this.x - 15 - scrollX, this.y - 20, 30, 4);
       ctx.fillStyle = 'lime';
-      ctx.fillRect(this.x - scrollX, this.y - 10, barW * healthRatio, barH);
+      ctx.fillRect(this.x - 15 - scrollX, this.y - 20, 30 * (this.health/100), 4);
 
-      // Draw rope if grappling
-      if(this.grappling && this.grapplePoint) {
+      if (this.grapple) this.grapple.draw();
+    }
+  }
+
+  // Grapple
+  class Grapple {
+    constructor(player, angle) {
+      this.player = player;
+      this.angle = angle;
+      this.length = 0;
+      this.target = null;
+      this.vx = Math.cos(angle) * 10;
+      this.vy = Math.sin(angle) * 10;
+      this.hooked = false;
+    }
+    update() {
+      if (!this.hooked) {
+        this.length += 10;
+        let tx = this.player.x + Math.cos(this.angle) * this.length;
+        let ty = this.player.y + Math.sin(this.angle) * this.length;
+        if (isSolid(tx, ty)) {
+          this.hooked = true;
+          this.target = {x: tx, y: ty};
+        }
+      } else {
+        // Elastic physics
+        let dx = this.target.x - this.player.x;
+        let dy = this.target.y - this.player.y;
+        let dist = Math.sqrt(dx*dx + dy*dy);
+        let stretch = dist - 150;
+        let k = 0.02;
+        if (stretch > 0) {
+          let force = stretch * k;
+          this.player.vx += (dx / dist) * force;
+          this.player.vy += (dy / dist) * force;
+        }
+        // Rope smashing terrain
+        if (Math.abs(this.player.vx) + Math.abs(this.player.vy) > 8) {
+          destroyBlock(this.player.x + dx/2, this.player.y + dy/2);
+        }
+      }
+    }
+    draw() {
+      if (this.hooked) {
         ctx.strokeStyle = 'white';
-        ctx.lineWidth = 2;
         ctx.beginPath();
-        ctx.moveTo(this.x + this.w/2 - scrollX, this.y + this.h/2);
-        ctx.lineTo(this.grapplePoint.x - scrollX, this.grapplePoint.y);
+        ctx.moveTo(this.player.x - scrollX, this.player.y);
+        ctx.lineTo(this.target.x - scrollX, this.target.y);
         ctx.stroke();
       }
     }
   }
 
-  // Bullet class
+  // Bullet
   class Bullet {
-    constructor(x, y, vx, vy, ownerId) {
+    constructor(x, y, angle, owner) {
       this.x = x;
       this.y = y;
-      this.vx = vx;
-      this.vy = vy;
-      this.ownerId = ownerId;
-      this.radius = 3;
-      this.life = 80;
+      this.vx = Math.cos(angle) * 6;
+      this.vy = Math.sin(angle) * 6;
+      this.owner = owner;
     }
-
     update() {
       this.x += this.vx;
       this.y += this.vy;
-      this.life--;
-
-      // Collide with terrain
-      if(collidesWithTerrain(this.x - this.radius, this.y - this.radius, this.radius*2, this.radius*2)) {
-        this.life = 0;
+      if (isSolid(this.x, this.y)) {
+        destroyBlock(this.x, this.y);
+        this.dead = true;
       }
-
-      // Collide with players
-      for(const p of players) {
-        if(p.id !== this.ownerId && p.health > 0) {
-          let dx = p.x + p.w/2 - this.x;
-          let dy = p.y + p.h/2 - this.y;
-          if(dx*dx + dy*dy < (p.w/2 + this.radius)*(p.w/2 + this.radius)) {
-            p.health -= 1;
-            this.life = 0;
-          }
+      for (let p of players) {
+        if (p.id !== this.owner && Math.hypot(p.x - this.x, p.y - this.y) < 8) {
+          p.health -= 10;
+          this.dead = true;
         }
       }
     }
-
     draw() {
       ctx.fillStyle = 'yellow';
       ctx.beginPath();
-      ctx.arc(this.x - scrollX, this.y, this.radius, 0, Math.PI*2);
+      ctx.arc(this.x - scrollX, this.y, 2, 0, Math.PI * 2);
       ctx.fill();
     }
   }
 
-  // Fire bullet helper
-  function fireBullet(player) {
-    let bx = player.x + player.w/2 + player.facing * 8;
-    let by = player.y + player.h/2 - 4;
-    let bvx = BULLET_SPEED * player.facing;
-    bullets.push(new Bullet(bx, by, bvx, 0, player.id));
+  let players = [];
+  let bullets = [];
+  let scrollX = 0;
+  let autoFollow = true;
+
+  function startGame() {
+    generateTerrain();
+    players = [];
+    bullets = [];
+    scrollX = 0;
+    autoFollow = true;
+
+    players.push(new Player(0, 100, 100, 'cyan'));
+    for (let i=1; i<=3; i++) {
+      players.push(new Player(i, 200+i*50, 100, 'orange', true));
+    }
+
+    requestAnimationFrame(gameLoop);
   }
 
-  // Find a spawn position inside the cave near X
-  function findSpawnY(x) {
-    for(let y = 0; y < HEIGHT - 40; y += 1) {
-      if(!collidesWithTerrain(x, y, 12, 18)) return y;
-    }
-    return HEIGHT - 40;
-  }
-
-  // Game over check and restart
-  function checkGameOver() {
-    let alive = players.filter(p => p.health > 0);
-    if(alive.length <= 1) {
-      showMessage('Game Over! Tap to restart.');
-      autoFollow = false;
-      return true;
-    }
-    return false;
-  }
-
-  function showMessage(msg) {
-    messageDiv.style.display = 'block';
-    messageDiv.textContent = msg;
-  }
-
-  function hideMessage() {
-    messageDiv.style.display = 'none';
-  }
-
-  // Input bindings
-  function bindButton(button, controlName) {
-    button.addEventListener('touchstart', e => {
-      e.preventDefault();
-      controls[controlName] = true;
-      button.classList.add('pressed');
-      autoFollow = true;
-    }, {passive:false});
-    button.addEventListener('touchend', e => {
-      e.preventDefault();
-      controls[controlName] = false;
-      button.classList.remove('pressed');
-    }, {passive:false});
-    button.addEventListener('mousedown', e => {
-      e.preventDefault();
-      controls[controlName] = true;
-      button.classList.add('pressed');
-      autoFollow = true;
-    });
-    button.addEventListener('mouseup', e => {
-      e.preventDefault();
-      controls[controlName] = false;
-      button.classList.remove('pressed');
-    });
-    button.addEventListener('mouseleave', e => {
-      e.preventDefault();
-      controls[controlName] = false;
-      button.classList.remove('pressed');
-    });
-  }
-
-  // Setup controls
-  function setupControls() {
-    for(const btn of dpad.children) {
-      if(btn.dataset.dir) {
-        bindButton(btn, btn.dataset.dir);
-      }
-    }
-    bindButton(fireBtn, 'fire');
-  }
-
-  // Touch panning for viewport
-  canvas.addEventListener('touchstart', e => {
-    if(e.touches.length === 1) {
-      isPanning = true;
-      panStartX = e.touches[0].clientX;
-      panLastX = panStartX;
-      autoFollow = false;
-    }
-  }, {passive:false});
-
-  canvas.addEventListener('touchmove', e => {
-    if(isPanning && e.touches.length === 1) {
-      const touchX = e.touches[0].clientX;
-      const deltaX = panLastX - touchX;
-      panLastX = touchX;
-      scrollX += deltaX;
-      if(scrollX < 0) scrollX = 0;
-      if(scrollX > TERRAIN_COLS * BLOCK_SIZE - WIDTH) scrollX = TERRAIN_COLS * BLOCK_SIZE - WIDTH;
-    }
-    e.preventDefault();
-  }, {passive:false});
-
-  canvas.addEventListener('touchend', e => {
-    if(e.touches.length === 0) {
-      isPanning = false;
-    }
-  });
-
-  // Mouse wheel scroll (optional)
-  canvas.addEventListener('wheel', e => {
-    scrollX += e.deltaY * 0.5;
-    if(scrollX < 0) scrollX = 0;
-    if(scrollX > TERRAIN_COLS * BLOCK_SIZE - WIDTH) scrollX = TERRAIN_COLS * BLOCK_SIZE - WIDTH;
-    autoFollow = false;
-    e.preventDefault();
-  }, {passive:false});
-
-  // Main update loop
-  function updateGame() {
-    // Update players
-    for(const p of players) {
-      if(p.health > 0) p.update();
-    }
-
-    // Update bullets
-    for(let i = bullets.length - 1; i >= 0; i--) {
-      bullets[i].update();
-      if(bullets[i].life <= 0) bullets.splice(i,1);
-    }
-
-    // Auto-scroll follow local player (players[0])
-    const localPlayer = players[0];
-    if(localPlayer && autoFollow && localPlayer.health > 0) {
-      let targetScroll = localPlayer.x + localPlayer.w/2 - WIDTH/2;
-      if(targetScroll < 0) targetScroll = 0;
-      if(targetScroll > TERRAIN_COLS * BLOCK_SIZE - WIDTH) targetScroll = TERRAIN_COLS * BLOCK_SIZE - WIDTH;
-      scrollX += (targetScroll - scrollX) * 0.1; // smooth easing
-    }
-  }
-
-  // Draw game scene
-  function drawGame() {
+  function gameLoop() {
     ctx.clearRect(0, 0, WIDTH, HEIGHT);
 
-    // Draw borders on edges to show level limits
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.2)';
-    ctx.fillRect(0, 0, 10, HEIGHT);
-    ctx.fillRect(WIDTH - 10, 0, 10, HEIGHT);
+    // Update
+    for (let p of players) p.update();
+    for (let b of bullets) b.update();
+    bullets = bullets.filter(b => !b.dead);
 
-    // Draw terrain blocks
-    for(let c = 0; c < TERRAIN_COLS; c++) {
-      for(let r = 0; r < TERRAIN_ROWS; r++) {
-        if(terrain[c][r] === 1) {
-          let px = c * BLOCK_SIZE - scrollX;
-          let py = r * BLOCK_SIZE;
-          if(px + BLOCK_SIZE >= 0 && px <= WIDTH && py + BLOCK_SIZE >= 0 && py <= HEIGHT) {
-            // Draw block with subtle shading
-            ctx.fillStyle = 'darkgray';
-            ctx.fillRect(px, py, BLOCK_SIZE, BLOCK_SIZE);
-            ctx.strokeStyle = 'black';
-            ctx.strokeRect(px, py, BLOCK_SIZE, BLOCK_SIZE);
-          }
+    // Auto follow
+    if (autoFollow) {
+      let me = players[0];
+      scrollX = me.x - WIDTH/2;
+      scrollX = Math.max(0, Math.min(scrollX, TERRAIN_COLS*BLOCK_SIZE - WIDTH));
+    }
+
+    // Draw terrain
+    for (let c = 0; c < TERRAIN_COLS; c++) {
+      for (let r = 0; r < TERRAIN_ROWS; r++) {
+        if (terrain[c][r] === 1) {
+          ctx.fillStyle = 'darkgray';
+          ctx.fillRect(c*BLOCK_SIZE - scrollX, r*BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
         }
       }
     }
 
     // Draw bullets
-    for(const b of bullets) {
-      b.draw();
-    }
+    for (let b of bullets) b.draw();
 
     // Draw players
-    for(const p of players) {
-      if(p.health > 0) p.draw();
-    }
+    for (let p of players) p.draw();
+
+    requestAnimationFrame(gameLoop);
   }
 
-  // Game loop
-  function gameLoop() {
-    updateGame();
-    drawGame();
-
-    if(!checkGameOver()) {
-      requestAnimationFrame(gameLoop);
-    }
+  // Controls
+  function bindButton(id, down, up) {
+    const btn = document.getElementById(id);
+    btn.addEventListener('touchstart', e => { down(); e.preventDefault(); autoFollow = true; });
+    btn.addEventListener('touchend', e => { up(); e.preventDefault(); });
   }
 
-  // Start game
-  function startGame() {
-    hideMessage();
-    generateTerrain();
-    players = [];
-    bullets = [];
+  const me = () => players[0];
 
-    // Spawn local player near start
-    const spawnX = BLOCK_SIZE * 5;
-    const spawnY = findSpawnY(spawnX);
-    players.push(new Player(0, spawnX, spawnY, 'cyan'));
+  bindButton('btnLeft', () => me().vx = -2, () => me().vx = 0);
+  bindButton('btnRight', () => me().vx = 2, () => me().vx = 0);
+  bindButton('btnUp', () => me().angle -= 0.1, () => {});
+  bindButton('btnDown', () => me().angle += 0.1, () => {});
+  bindButton('btnFire', () => bullets.push(new Bullet(me().x, me().y, me().angle, me().id)), () => {});
+  bindButton('btnJump', () => { if (me().onGround) me().vy = -8; }, () => {});
+  bindButton('btnGrapple', () => me().grapple = new Grapple(me(), me().angle), () => me().grapple = null);
 
-    // Spawn some bots randomly
-    for(let i=1; i<=3; i++) {
-      let bx = BLOCK_SIZE * (40 + i * 25);
-      let by = findSpawnY(bx);
-      players.push(new Player(i, bx, by, 'orange', true));
+  // Pan with finger
+  let panStartX = null;
+  canvas.addEventListener('touchstart', e => {
+    if (e.touches.length === 1) {
+      autoFollow = false;
+      panStartX = e.touches[0].clientX + scrollX;
     }
-
-    scrollX = 0;
-    autoFollow = true;
-
-    gameLoop();
-  }
-
-  // Restart on tap after game over
-  messageDiv.addEventListener('click', () => {
-    startGame();
+  });
+  canvas.addEventListener('touchmove', e => {
+    if (panStartX !== null) {
+      scrollX = panStartX - e.touches[0].clientX;
+      scrollX = Math.max(0, Math.min(scrollX, TERRAIN_COLS*BLOCK_SIZE - WIDTH));
+    }
+  });
+  canvas.addEventListener('touchend', e => {
+    panStartX = null;
   });
 
-  // Initialize controls and start
-  setupControls();
-  showMessage('Tap to Start');
+  document.getElementById('message').addEventListener('click', () => {
+    document.getElementById('message').style.display = 'none';
+    startGame();
+  });
 })();
 </script>
 
