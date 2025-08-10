@@ -1,417 +1,398 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
-  <title>MoleZ — single‑file game clone</title>
-  <style>
-    /* Global reset */
-    * { box-sizing: border-box; margin:0; padding:0; }
-    html, body { width:100%; height:100%; overflow:hidden; font-family: system-ui, sans-serif; }
-
-    body {
-      background: #0a1220;
-      color: #e5eaf5;
-      display: flex;
-      flex-direction: column;
-    }
-
-    canvas { flex: 1; display:block; width:100%; height:100%; background:#04131f; }
-
-    /* On-screen controls for touch */
-    .hud {
-      position:absolute;
-      left:0; right:0; top:0;
-      padding:8px;
-      display:flex;
-      justify-content:space-between;
-      pointer-events:none; /* let touches through except on buttons */
-    }
-    .hud > div { pointer-events:auto; }
-    .scoreboard { font-size:14px; }
-    .btn {
-      background:#14284c;
-      border:1px solid #274374;
-      color:#e5eaf5;
-      padding:6px 10px;
-      border-radius:8px;
-      cursor:pointer;
-      font-size:12px;
-      margin-left:6px;
-    }
-
-    /* Virtual D-pad + actions */
-    .controls {
-      position:absolute;
-      left:10px;
-      bottom:10px;
-      display:flex;
-      flex-direction:row;
-      gap:14px;
-      pointer-events:none;
-    }
-    .dpad, .actions {
-      display:flex;
-      flex-direction:column;
-      gap:6px;
-      pointer-events:auto;
-    }
-    .dpad-row { display:flex; justify-content:center; gap:6px; }
-    .ctrl-btn {
-      width:44px;
-      height:44px;
-      background:#14284c;
-      border:1px solid #274374;
-      border-radius:6px;
-      display:flex;
-      align-items:center;
-      justify-content:center;
-      color:#e5eaf5;
-      font-size:20px;
-      user-select:none;
-      cursor:pointer;
-    }
-    .ctrl-btn:active { background:#274374; }
-    .actions .ctrl-btn { width:60px; height:50px; font-size:14px; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>MoleZ with Grapple & Aim</title>
+<style>
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html, body { height:100%; overflow:hidden; }
+  body { background:#081221; color:#e5eaf5; font-family:sans-serif; }
+  canvas { display:block; width:100%; height:100%; background:#03101c; }
+  .hud {
+    position:absolute; top:10px; left:10px; right:10px;
+    display:flex; justify-content:space-between; z-index:10;
+    pointer-events:none; font-size:14px;
+  }
+  .ctrl-area {
+    position:absolute; bottom:10px; left:10px; right:10px;
+    display:flex; justify-content:space-between; z-index:10;
+    pointer-events:none;
+  }
+  .dpad, .actions { display:flex; flex-direction:column; gap:6px; pointer-events:auto; }
+  .dpad-row { display:flex; gap:6px; justify-content:center; }
+  .btn {
+    width:48px; height:48px; border-radius:8px;
+    background:#14345a; border:1px solid #285180;
+    display:flex; align-items:center; justify-content:center;
+    color:#e5eaf5; font-size:20px; user-select:none; cursor:pointer;
+  }
+  .act-btn {
+    width:64px; height:50px; background:#355a86; border:1px solid #4e7aa7;
+    font-size:14px;
+  }
+  .btn:active { filter:brightness(1.2); }
+</style>
 </head>
 <body>
-  <canvas id="canvas"></canvas>
+<canvas id="canvas"></canvas>
 
-  <!-- Score + status overlay -->
-  <div class="hud">
-    <div class="scoreboard">
-      <span id="timer">Time: 0</span> &nbsp;|&nbsp;
-      <span id="score">Score: 0</span>
+<div class="hud">
+  <div>
+    <span id="timeLabel">Time: 120</span> |
+    <span id="scoreLabel">Score: 0</span>
+  </div>
+  <div>
+    <button id="resetBtn" style="pointer-events:auto;padding:4px 10px;">Reset</button>
+  </div>
+</div>
+
+<div class="ctrl-area">
+  <div class="dpad">
+    <div class="dpad-row">
+      <div></div>
+      <div class="btn" id="btnUp">▲</div>
+      <div></div>
     </div>
-    <div>
-      <button class="btn" id="resetBtn">Reset</button>
+    <div class="dpad-row">
+      <div class="btn" id="btnLeft">◀</div>
+      <div class="btn" id="btnDown">▼</div>
+      <div class="btn" id="btnRight">▶</div>
     </div>
   </div>
-
-  <!-- Mobile controls -->
-  <div class="controls">
-    <div class="dpad">
-      <div class="dpad-row"><div></div><div id="up" class="ctrl-btn">▲</div><div></div></div>
-      <div class="dpad-row"><div id="left" class="ctrl-btn">◀</div><div id="down" class="ctrl-btn">▼</div><div id="right" class="ctrl-btn">▶</div></div>
-    </div>
-    <div class="actions">
-      <div id="jump" class="ctrl-btn">JUMP</div>
-      <div id="fire" class="ctrl-btn">FIRE</div>
-    </div>
+  <div class="actions">
+    <div class="btn act-btn" id="btnJump">Jump</div>
+    <div class="btn act-btn" id="btnFire">Fire</div>
+    <div class="btn act-btn" id="btnGrapple">Grapple</div>
   </div>
+</div>
 
-  <script>
-    /* MoleZ-like single-file game */
-    const canvas = document.getElementById('canvas');
-    const ctx = canvas.getContext('2d');
+<script>
+// Basic MoleZ-like engine with aiming and grappling
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+function resize() { canvas.width = window.innerWidth; canvas.height = window.innerHeight; }
+window.addEventListener('resize', resize); resize();
 
-    // Fit canvas to window size
-    function resizeCanvas() {
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
+// Terrain grid
+const CELL = 4; const COLS = 300; const ROWS = 60;
+let terrain = [];
+
+// Game state
+let players = [];
+let bullets = [];
+let ropes = [];
+let timeLeft = 120;
+let score = 0;
+let running = true;
+
+// Player class
+class Player {
+  constructor(x,y,color) {
+    this.x=x; this.y=y; this.vx=0; this.vy=0;
+    this.w=12; this.h=12; this.c=color;
+    this.onGround=false;
+    this.jumpCooldown=0; this.fireCooldown=0; this.grappleCooldown=0;
+    this.aim = 0; // radians
+    this.rope = null;
+  }
+  input(input) {
+    const speed = 1.5;
+    if(input.left) { this.vx = -speed; }
+    if(input.right) { this.vx = speed; }
+    if(!input.left && !input.right) { this.vx *= 0.85; }
+    // tilt gun
+    const aimStep = 0.07;
+    if(input.up) this.aim -= aimStep;
+    if(input.down) this.aim += aimStep;
+    // limit aim between -pi/2 and pi/2
+    this.aim = Math.max(-Math.PI/2, Math.min(Math.PI/2, this.aim));
+    // jump
+    if(input.jump && this.onGround && this.jumpCooldown<=0) {
+      this.vy = -5; this.onGround=false; this.jumpCooldown=15;
     }
-    window.addEventListener('resize', resizeCanvas);
-    resizeCanvas();
-
-    /** Game state */
-    const state = {
-      time: 120,
-      score: 0,
-      running: true,
-      terrain: [],
-      players: [],
-      bullets: [],
-      pickups: [],
-    };
-
-    // UI elements
-    const timerEl = document.getElementById('timer');
-    const scoreEl = document.getElementById('score');
-    document.getElementById('resetBtn').onclick = () => initGame();
-
-    /** Generate cave terrain as 2D boolean array */
-    const GRID_SIZE = 4; // pixel size per cell
-    const MAP_WIDTH = 300;
-    const MAP_HEIGHT = 60;
-    function generateTerrain() {
-      const cols = MAP_WIDTH;
-      const rows = MAP_HEIGHT;
-      const grid = Array.from({length: rows}, () => Array(cols).fill(0));
-
-      // random fill
-      for (let y=0; y<rows; y++) {
-        for (let x=0; x<cols; x++) {
-          if (y < rows*0.4) grid[y][x] = 0;
-          else grid[y][x] = Math.random() < 0.55 ? 1 : 0;
+    // fire bullet
+    if(input.fire && this.fireCooldown<=0) {
+      this.fire(); this.fireCooldown = 20;
+    }
+    // grapple
+    if(input.grapple && this.grappleCooldown<=0) {
+      this.toggleGrapple(); this.grappleCooldown = 20;
+    }
+    this.jumpCooldown=Math.max(0,this.jumpCooldown-1);
+    this.fireCooldown=Math.max(0,this.fireCooldown-1);
+    this.grappleCooldown=Math.max(0,this.grappleCooldown-1);
+  }
+  fire() {
+    const muzzleX = this.x + this.w/2 + Math.cos(this.aim)*6;
+    const muzzleY = this.y + this.h/2 + Math.sin(this.aim)*6;
+    const speed = 2.5;
+    bullets.push(new Bullet(muzzleX,muzzleY,Math.cos(this.aim)*speed,Math.sin(this.aim)*speed,this));
+  }
+  toggleGrapple() {
+    if(this.rope) {
+      this.rope.detach();
+    } else {
+      const c = this.getCenter();
+      const maxLen = 200;
+      const step = 4;
+      for(let t=0; t<maxLen; t+=step) {
+        const tx = c.x + Math.cos(this.aim)*t;
+        const ty = c.y + Math.sin(this.aim)*t;
+        if(isSolid(tx,ty)) {
+          this.rope = new Rope(this, {x:tx,y:ty});
+          ropes.push(this.rope);
+          break;
         }
       }
-      // cellular automata smoothing
-      for (let iter=0; iter<3; iter++) {
-        const newGrid = grid.map(arr => [...arr]);
-        for (let y=1; y<rows-1; y++) {
-          for (let x=1; x<cols-1; x++) {
-            let count = 0;
-            for (let dy=-1; dy<=1; dy++) {
-              for (let dx=-1; dx<=1; dx++) {
-                if (grid[y+dy][x+dx]) count++;
-              }
-            }
-            newGrid[y][x] = count >= 5 ? 1 : 0;
+    }
+  }
+  getCenter() { return {x:this.x+this.w/2, y:this.y+this.h/2}; }
+  update() {
+    // apply gravity
+    if(!this.rope) this.vy += 0.25;
+    // rope physics
+    if(this.rope) this.rope.update();
+    // move horizontally
+    this.x += this.vx;
+    if(isSolid(this.x, this.y) || isSolid(this.x, this.y+this.h)) {
+      this.x -= this.vx; this.vx=0;
+    }
+    // move vertically
+    this.y += this.vy;
+    if(isSolid(this.x, this.y+this.h) || isSolid(this.x+this.w, this.y+this.h)) {
+      // on ground
+      while(isSolid(this.x, this.y+this.h) || isSolid(this.x+this.w,this.y+this.h)) {
+        this.y -= 1;
+      }
+      this.vy=0; this.onGround=true;
+    } else {
+      this.onGround=false;
+    }
+    // boundaries
+    this.x = Math.max(0, Math.min(this.x, COLS*CELL - this.w));
+    this.y = Math.max(0, Math.min(this.y, ROWS*CELL - this.h));
+  }
+  draw() {
+    ctx.fillStyle = this.c;
+    ctx.fillRect(this.x, this.y, this.w, this.h);
+    // draw gun
+    const c = this.getCenter();
+    ctx.strokeStyle = this.c; ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(c.x, c.y);
+    ctx.lineTo(c.x + Math.cos(this.aim)*15, c.y + Math.sin(this.aim)*15);
+    ctx.stroke();
+  }
+}
+
+// Bullet class
+class Bullet {
+  constructor(x,y,vx,vy,owner) {
+    this.x=x; this.y=y; this.vx=vx; this.vy=vy;
+    this.r=3; this.owner=owner; this.life=180;
+  }
+  update() {
+    this.vy += 0.15;
+    this.x += this.vx;
+    this.y += this.vy;
+    // collision with terrain
+    if(isSolid(this.x,this.y)) {
+      carve(this.x,this.y,8);
+      this.life=0; return;
+    }
+    // hit players
+    for(const p of players) {
+      if(p===this.owner) continue;
+      const dx=p.x+p.w/2-this.x, dy=p.y+p.h/2-this.y;
+      if(dx*dx + dy*dy < (p.w/2+this.r)*(p.w/2+this.r)) {
+        carve(this.x,this.y,12);
+        score += 1;
+        this.life=0; return;
+      }
+    }
+    this.life--;
+  }
+  draw() {
+    ctx.fillStyle='#ffdf77';
+    ctx.beginPath();
+    ctx.arc(this.x, this.y, this.r, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+
+// Rope class
+class Rope {
+  constructor(player, anchor) {
+    this.player=player;
+    this.anchor=anchor;
+    this.rest = 120;
+  }
+  update() {
+    const c = this.player.getCenter();
+    const dx=this.anchor.x-c.x, dy=this.anchor.y-c.y;
+    const d = Math.sqrt(dx*dx+dy*dy);
+    if(d > this.rest) {
+      const stretch = d - this.rest;
+      const k=0.02;
+      const fx = (dx/d)*stretch*k;
+      const fy = (dy/d)*stretch*k;
+      this.player.vx += fx;
+      this.player.vy += fy;
+    }
+    // swing left/right controls
+    if(input.left) this.player.vx -= 0.05;
+    if(input.right) this.player.vx += 0.05;
+    // rope snaps if terrain destroyed
+    if(!isSolid(this.anchor.x,this.anchor.y)) {
+      this.detach();
+    }
+  }
+  detach() {
+    this.player.rope = null;
+    const idx = ropes.indexOf(this);
+    if(idx>=0) ropes.splice(idx,1);
+  }
+  draw() {
+    const c=this.player.getCenter();
+    ctx.strokeStyle='#86d7f2'; ctx.lineWidth=2;
+    ctx.beginPath();
+    ctx.moveTo(c.x, c.y);
+    ctx.lineTo(this.anchor.x, this.anchor.y);
+    ctx.stroke();
+  }
+}
+
+// Terrain functions
+function generateTerrain() {
+  const grid = Array.from({length:ROWS}, ()=>Array(COLS).fill(0));
+  for(let y=0;y<ROWS;y++){
+    for(let x=0;x<COLS;x++){
+      const rand = y<ROWS*0.5 ? 0 : (Math.random()<0.5?1:0);
+      grid[y][x]=rand;
+    }
+  }
+  for(let i=0;i<3;i++){
+    const copy=grid.map(r=>r.slice());
+    for(let y=1;y<ROWS-1;y++){
+      for(let x=1;x<COLS-1;x++){
+        let sum=0;
+        for(let dy=-1;dy<=1;dy++){
+          for(let dx=-1;dx<=1;dx++){
+            sum += copy[y+dy][x+dx];
           }
         }
-        grid.forEach((_,y) => grid[y] = newGrid[y]);
-      }
-      // ensure floor
-      for (let y=Math.floor(rows*0.8); y<rows; y++) {
-        for (let x=0; x<cols; x++) grid[y][x] = 1;
-      }
-      return grid;
-    }
-
-    /** Player class */
-    class Player {
-      constructor(x, y, color) {
-        this.x = x;
-        this.y = y;
-        this.vx = 0;
-        this.vy = 0;
-        this.width = 12;
-        this.height = 12;
-        this.color = color;
-        this.onGround = false;
-        this.jumpCooldown = 0;
-        this.fireCooldown = 0;
-      }
-      applyInput(input) {
-        const speed = 1.8;
-        if (input.left) this.vx = -speed;
-        if (input.right) this.vx = speed;
-        if (!input.left && !input.right) this.vx *= 0.8;
-        if (input.up && this.onGround && this.jumpCooldown <= 0) {
-          this.vy = -4.5;
-          this.onGround = false;
-          this.jumpCooldown = 15;
-        }
-        if (input.fire && this.fireCooldown <= 0) {
-          fireBullet(this);
-          this.fireCooldown = 20;
-        }
-        this.jumpCooldown = Math.max(0, this.jumpCooldown - 1);
-        this.fireCooldown = Math.max(0, this.fireCooldown - 1);
-      }
-      update() {
-        // physics
-        this.vy += 0.23; // gravity
-        // move horizontally
-        this.x += this.vx;
-        // horizontal collision
-        if (isColliding(this.x, this.y)) {
-          // move back
-          this.x -= this.vx;
-          this.vx = 0;
-        }
-        // move vertically
-        this.y += this.vy;
-        // vertical collision
-        if (isColliding(this.x, this.y)) {
-          // moving down (hit floor)
-          if (this.vy > 0) {
-            this.onGround = true;
-          }
-          // step back until no collision
-          while (isColliding(this.x, this.y)) {
-            this.y -= Math.sign(this.vy);
-          }
-          this.vy = 0;
-        }
-        // constrain inside map
-        const maxX = MAP_WIDTH*GRID_SIZE - this.width;
-        this.x = Math.max(0, Math.min(this.x, maxX));
-      }
-      draw() {
-        ctx.fillStyle = this.color;
-        ctx.fillRect(this.x, this.y, this.width, this.height);
+        grid[y][x] = sum>=5?1:0;
       }
     }
-
-    /** Bullet class */
-    class Bullet {
-      constructor(x, y, vx, vy, owner) {
-        this.x = x;
-        this.y = y;
-        this.vx = vx;
-        this.vy = vy;
-        this.radius = 2.5;
-        this.life = 200;
-        this.owner = owner;
-      }
-      update() {
-        this.vy += 0.15;
-        this.x += this.vx;
-        this.y += this.vy;
-        if (isColliding(this.x, this.y)) {
-          // explosion: carve terrain
-          carveCircle(this.x, this.y, 8);
-          this.life = 0;
-          return;
-        }
-        // hit players
-        for (const p of state.players) {
-          if (p === this.owner) continue;
-          const dx = p.x + p.width/2 - this.x;
-          const dy = p.y + p.height/2 - this.y;
-          if (dx*dx + dy*dy < (p.width/2 + this.radius)*(p.width/2 + this.radius)) {
-            // damage + explosion
-            carveCircle(this.x, this.y, 12);
-            state.score += 1;
-            this.life = 0;
-            break;
-          }
-        }
-        this.life--;
-      }
-      draw() {
-        ctx.fillStyle = '#ffe47a';
-        ctx.beginPath();
-        ctx.arc(this.x, this.y, this.radius, 0, Math.PI*2);
-        ctx.fill();
+  }
+  for(let y=Math.floor(ROWS*0.8); y<ROWS; y++){
+    for(let x=0; x<COLS; x++) grid[y][x]=1;
+  }
+  return grid;
+}
+function isSolid(px,py) {
+  const cx = Math.floor(px/CELL), cy=Math.floor(py/CELL);
+  if(cx<0||cy<0||cx>=COLS||cy>=ROWS) return true;
+  return terrain[cy][cx]!==0;
+}
+function carve(x,y,r) {
+  const cx=Math.floor(x/CELL), cy=Math.floor(y/CELL), rr=Math.ceil(r/CELL);
+  for(let yy=cy-rr;yy<=cy+rr;yy++){
+    for(let xx=cx-rr;xx<=cx+rr;xx++){
+      if(xx>=0&&yy>=0&&xx<COLS&&yy<ROWS){
+        const dx=xx-cx, dy=yy-cy;
+        if(dx*dx+dy*dy <= (r/CELL)*(r/CELL)) terrain[yy][xx]=0;
       }
     }
+  }
+}
 
-    /** Carve a circle out of the terrain */
-    function carveCircle(cx, cy, rad) {
-      const gx = Math.floor(cx / GRID_SIZE);
-      const gy = Math.floor(cy / GRID_SIZE);
-      const r = Math.ceil(rad / GRID_SIZE);
-      for (let y=gy-r; y<=gy+r; y++) {
-        for (let x=gx-r; x<=gx+r; x++) {
-          if (x>=0 && y>=0 && x<MAP_WIDTH && y<MAP_HEIGHT) {
-            const dx = (x - gx) * GRID_SIZE + GRID_SIZE/2;
-            const dy = (y - gy) * GRID_SIZE + GRID_SIZE/2;
-            if (dx*dx + dy*dy <= rad*rad) state.terrain[y][x] = 0;
-          }
-        }
+// Input state
+const input = {left:false,right:false,up:false,down:false,jump:false,fire:false,grapple:false};
+window.addEventListener('keydown', e=>{
+  if(e.key==='ArrowLeft'||e.key==='a') input.left=true;
+  if(e.key==='ArrowRight'||e.key==='d') input.right=true;
+  if(e.key==='ArrowUp'||e.key==='w') input.up=true;
+  if(e.key==='ArrowDown'||e.key==='s') input.down=true;
+  if(e.key===' ') input.jump=true;
+  if(e.key==='f') input.fire=true;
+  if(e.key==='g') input.grapple=true;
+});
+window.addEventListener('keyup', e=>{
+  if(e.key==='ArrowLeft'||e.key==='a') input.left=false;
+  if(e.key==='ArrowRight'||e.key==='d') input.right=false;
+  if(e.key==='ArrowUp'||e.key==='w') input.up=false;
+  if(e.key==='ArrowDown'||e.key==='s') input.down=false;
+  if(e.key===' ') input.jump=false;
+  if(e.key==='f') input.fire=false;
+  if(e.key==='g') input.grapple=false;
+});
+
+// Mobile control bindings
+function bindTouch(id, key) {
+  const el=document.getElementById(id);
+  el.addEventListener('touchstart', e=>{e.preventDefault(); input[key]=true;}, {passive:false});
+  el.addEventListener('touchend', e=>{e.preventDefault(); input[key]=false;}, {passive:false});
+  el.addEventListener('mousedown', e=>{e.preventDefault(); input[key]=true;});
+  el.addEventListener('mouseup', e=>{e.preventDefault(); input[key]=false;});
+}
+bindTouch('btnLeft','left');
+bindTouch('btnRight','right');
+bindTouch('btnUp','up');
+bindTouch('btnDown','down');
+bindTouch('btnJump','jump');
+bindTouch('btnFire','fire');
+bindTouch('btnGrapple','grapple');
+
+document.getElementById('resetBtn').onclick = ()=>startGame();
+
+function startGame() {
+  terrain = generateTerrain();
+  players = [new Player(30, 200, '#e6c275')];
+  bullets = []; ropes=[]; timeLeft = 120; score=0; running=true;
+  document.getElementById('timeLabel').textContent = 'Time: ' + timeLeft;
+  document.getElementById('scoreLabel').textContent = 'Score: ' + score;
+}
+
+function update() {
+  if(!running) return;
+  timeLeft -= 1/60;
+  if(timeLeft <= 0) { running=false; }
+  players.forEach(p=>{ p.input(input); p.update(); });
+  bullets = bullets.filter(b=>b.life>0);
+  bullets.forEach(b=>b.update());
+  ropes.forEach(r=>r.update());
+  document.getElementById('timeLabel').textContent = 'Time: ' + Math.ceil(timeLeft);
+  document.getElementById('scoreLabel').textContent = 'Score: ' + score;
+}
+function render() {
+  ctx.clearRect(0,0,canvas.width,canvas.height);
+  // offset for following player
+  const hero = players[0];
+  const offsetX = Math.max(0, Math.min(hero.x - canvas.width/2, COLS*CELL - canvas.width));
+  // draw terrain
+  for(let y=0;y<ROWS;y++){
+    for(let x=0;x<COLS;x++){
+      if(terrain[y][x]) {
+        const px=x*CELL-offsetX;
+        const py=y*CELL;
+        ctx.fillStyle = terrain[y][x]==1? '#3a5370' : '#24435d';
+        ctx.fillRect(px,py,CELL,CELL);
       }
     }
-
-    /** Check if a point collides with terrain */
-    function isColliding(px, py) {
-      const col = Math.floor((px)/GRID_SIZE);
-      const row = Math.floor((py)/GRID_SIZE);
-      if (col < 0 || row < 0 || col >= MAP_WIDTH || row >= MAP_HEIGHT) return true;
-      return state.terrain[row][col] !== 0;
-    }
-
-    /** Fire a bullet from a player */
-    function fireBullet(player) {
-      const muzzleX = player.x + player.width/2;
-      const muzzleY = player.y;
-      const speed = 3;
-      const dir = player.vx >= 0 ? 1 : -1;
-      const bullet = new Bullet(muzzleX, muzzleY, dir * speed, -1.5, player);
-      state.bullets.push(bullet);
-    }
-
-    /** Input management */
-    const keyState = { left:false, right:false, up:false, fire:false };
-    document.addEventListener('keydown', e => {
-      if (e.key === 'ArrowLeft' || e.key === 'a') keyState.left = true;
-      if (e.key === 'ArrowRight' || e.key === 'd') keyState.right = true;
-      if (e.key === 'ArrowUp' || e.key === 'w') keyState.up = true;
-      if (e.key === ' ') keyState.fire = true;
-    });
-    document.addEventListener('keyup', e => {
-      if (e.key === 'ArrowLeft' || e.key === 'a') keyState.left = false;
-      if (e.key === 'ArrowRight' || e.key === 'd') keyState.right = false;
-      if (e.key === 'ArrowUp' || e.key === 'w') keyState.up = false;
-      if (e.key === ' ') keyState.fire = false;
-    });
-
-    // Mobile controls
-    function bindTouch(btnId, onDown, onUp) {
-      const el = document.getElementById(btnId);
-      el.addEventListener('touchstart', e => { e.preventDefault(); onDown(); }, {passive:false});
-      el.addEventListener('touchend', e => { e.preventDefault(); onUp(); }, {passive:false});
-      el.addEventListener('mousedown', e => { e.preventDefault(); onDown(); });
-      el.addEventListener('mouseup', e => { e.preventDefault(); onUp(); });
-    }
-    bindTouch('left', () => { keyState.left = true; }, () => { keyState.left = false; });
-    bindTouch('right', () => { keyState.right = true; }, () => { keyState.right = false; });
-    bindTouch('up', () => { keyState.up = true; }, () => { keyState.up = false; });
-    bindTouch('fire', () => { keyState.fire = true; }, () => { keyState.fire = false; });
-    bindTouch('jump', () => { keyState.up = true; }, () => { keyState.up = false; });
-
-    /** Game loop */
-    function update() {
-      if (!state.running) return;
-      // update time
-      state.time -= 1/60;
-      if (state.time <= 0) {
-        state.time = 0;
-        state.running = false;
-      }
-
-      // update players
-      for (const p of state.players) {
-        p.applyInput(keyState);
-        p.update();
-      }
-
-      // update bullets
-      state.bullets = state.bullets.filter(b => b.life > 0);
-      for (const b of state.bullets) b.update();
-
-      timerEl.textContent = 'Time: ' + Math.ceil(state.time);
-      scoreEl.textContent = 'Score: ' + state.score;
-    }
-
-    function draw() {
-      // clear
-      ctx.fillStyle = '#04131f';
-      ctx.fillRect(0,0,canvas.width,canvas.height);
-
-      // draw terrain
-      const offsetX = Math.max(0, state.players[0].x - canvas.width * 0.5);
-      for (let y=0; y<MAP_HEIGHT; y++) {
-        for (let x=0; x<MAP_WIDTH; x++) {
-          if (state.terrain[y][x]) {
-            const px = x*GRID_SIZE - offsetX;
-            const py = y*GRID_SIZE;
-            if (px > -GRID_SIZE && px < canvas.width+GRID_SIZE) {
-              ctx.fillStyle = state.terrain[y][x] === 1 ? '#38527a' : '#213a5a';
-              ctx.fillRect(px, py, GRID_SIZE, GRID_SIZE);
-            }
-          }
-        }
-      }
-
-      // draw bullets
-      for (const b of state.bullets) b.draw();
-
-      // draw players
-      for (const p of state.players) p.draw();
-    }
-
-    function loop() {
-      update();
-      draw();
-      requestAnimationFrame(loop);
-    }
-
-    function initGame() {
-      // reset state
-      state.time = 120;
-      state.score = 0;
-      state.running = true;
-      state.terrain = generateTerrain();
-      state.players = [new Player(30, MAP_HEIGHT*GRID_SIZE/2, '#ecb365')];
-      state.bullets = [];
-      state.pickups = [];
-    }
-
-    initGame();
-    loop();
-  </script>
+  }
+  bullets.forEach(b=>b.draw());
+  ropes.forEach(r=>r.draw());
+  players.forEach(p=>{ p.draw(); });
+}
+function gameLoop() {
+  update();
+  render();
+  requestAnimationFrame(gameLoop);
+}
+startGame();
+gameLoop();
+</script>
 </body>
 </html>
